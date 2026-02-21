@@ -135,48 +135,50 @@ jobs:
           cd ~/buildroot-work/buildroot-2018.02-rc3
           mkdir -p package/m4
           
-          cat > package/m4/0001-fix-c-stack-ubuntu22.patch << 'EOF'
-          --- a/lib/c-stack.c
-          +++ b/lib/c-stack.c
-          @@ -16,16 +16,17 @@
-              along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
-           
-           /* Written by Paul Eggert.  */
-           
-           #include <config.h>
-           
-          -#include "c-stack.h"
-          -
-           #include <errno.h>
-           #include <signal.h>
-           #include <stdbool.h>
-           #include <stdlib.h>
-           #include <string.h>
-           #include <unistd.h>
-           
-          +#include "c-stack.h"
-          +
-           #if HAVE_SETRLIMIT
-           /* FIXME: This use of HAVE_SETRLIMIT is wrong, as it checks for the
-              function, not the symbol.  But glibc defines setrlimit unconditionally,
-          @@ -49,15 +50,7 @@
-           #endif
-           #endif
-           
-          -#if HAVE_LIBSIGSEGV
-          -# include <sigsegv.h>
-          -#elif defined HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
-          -/* libsigsegv 2.6 through 2.8 have a bug where sigsegv_handler fails
-          -   to install the preallocated stack for the overflow handler.  */
-          -# else
-          -# define LIBSIGSEGV_PREALLOC_STACK 1
-          -# include <sigsegv.h>
-          -#endif
-          +#include <sigsegv.h>
-           
-           #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T
-           # include <ucontext.h>
-          EOF
+          # 使用简单的 cat 命令创建补丁，避免 heredoc 问题
+          echo "--- a/lib/c-stack.c" > package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "+++ b/lib/c-stack.c" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "@@ -16,16 +16,17 @@" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "     along with this program.  If not, see <http://www.gnu.org/licenses/>.  */" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " " >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " /* Written by Paul Eggert.  */" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " " >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #include <config.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " " >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-#include \"c-stack.h\"" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #include <errno.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #include <signal.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #include <stdbool.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #include <stdlib.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #include <string.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #include <unistd.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " " >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "+#include \"c-stack.h\"" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "+" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #if HAVE_SETRLIMIT" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " /* FIXME: This use of HAVE_SETRLIMIT is wrong, as it checks for the" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "    function, not the symbol.  But glibc defines setrlimit unconditionally," >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "@@ -49,15 +50,7 @@" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #endif" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #endif" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " " >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-#if HAVE_LIBSIGSEGV" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-# include <sigsegv.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-#elif defined HAVE_LIBSIGSEGV && SIGSTKSZ < 16384" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-/* libsigsegv 2.6 through 2.8 have a bug where sigsegv_handler fails" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-   to install the preallocated stack for the overflow handler.  */" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-# else" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-# define LIBSIGSEGV_PREALLOC_STACK 1" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-# include <sigsegv.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "-#endif" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo "+#include <sigsegv.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " " >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          echo " # include <ucontext.h>" >> package/m4/0001-fix-c-stack-ubuntu22.patch
+          
+          echo "补丁文件创建完成"
+          cat package/m4/0001-fix-c-stack-ubuntu22.patch
 
       - name: Initialize Buildroot and Configure
         run: |
