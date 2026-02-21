@@ -14,7 +14,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04   # 更新为 22.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
@@ -24,37 +24,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            git \
-            wget \
-            cpio \
-            unzip \
-            rsync \
-            bc \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libssl-dev \
-            flex \
-            bison \
-            libelf-dev \
-            python2 \                # Ubuntu 22.04 仍有 python2 包
-            python3 \
-            file \
-            gawk \
-            texinfo \
-            help2man \
-            libtool-bin \
-            autoconf \
-            automake \
-            pkg-config \
-            cmake \
-            libglib2.0-dev \
-            libfdt-dev \
-            libpixman-1-dev \
-            zlib1g-dev \
-            device-tree-compiler \
+            build-essential git wget cpio unzip rsync bc \
+            libncurses5-dev libncursesw5-dev libssl-dev \
+            flex bison libelf-dev python2 python3 file gawk \
+            texinfo help2man libtool-bin autoconf automake \
+            pkg-config cmake libglib2.0-dev libfdt-dev \
+            libpixman-1-dev zlib1g-dev device-tree-compiler \
             locales
-          # 创建 python 指向 python2 的符号链接（Buildroot 2018 可能依赖）
           sudo ln -sf /usr/bin/python2 /usr/bin/python
 
       - name: Set locale
@@ -66,23 +42,22 @@ jobs:
         id: cache-dl
         uses: actions/cache@v4
         with:
-          path: buildroot-${BUILDROOT_VERSION}/dl
-          key: ${{ runner.os }}-buildroot-dl-${{ hashFiles('buildroot-${BUILDROOT_VERSION}/dl/**') }}
+          path: buildroot-${{ env.BUILDROOT_VERSION }}/dl
+          key: ${{ runner.os }}-buildroot-dl-${{ hashFiles(format('buildroot-{0}/dl/**', env.BUILDROOT_VERSION)) }}
           restore-keys: |
             ${{ runner.os }}-buildroot-dl-
 
       - name: Download Buildroot
         run: |
-          wget -q ${BUILDROOT_URL}
-          tar -xf buildroot-${BUILDROOT_VERSION}.tar.gz
+          wget -q ${{ env.BUILDROOT_URL }}
+          tar -xf buildroot-${{ env.BUILDROOT_VERSION }}.tar.gz
 
       - name: Copy defconfig
         run: |
-          if [ -f "configs/${DEFCONFIG_NAME}" ]; then
-            cp configs/${DEFCONFIG_NAME} buildroot-${BUILDROOT_VERSION}/configs/
+          if [ -f "configs/${{ env.DEFCONFIG_NAME }}" ]; then
+            cp configs/${{ env.DEFCONFIG_NAME }} buildroot-${{ env.BUILDROOT_VERSION }}/configs/
           else
-            # 默认 defconfig 内容（根据您的教程）
-            cat > buildroot-${BUILDROOT_VERSION}/configs/${DEFCONFIG_NAME} << 'EOF'
+            cat > buildroot-${{ env.BUILDROOT_VERSION }}/configs/${{ env.DEFCONFIG_NAME }} << 'EOF'
 BR2_aarch64=y
 BR2_cortex_a55=y
 BR2_ARM_FPU_VFPV4=y
@@ -108,19 +83,18 @@ EOF
           fi
 
       - name: Configure Buildroot
-        working-directory: buildroot-${BUILDROOT_VERSION}
+        working-directory: buildroot-${{ env.BUILDROOT_VERSION }}
         run: |
-          make ${DEFCONFIG_NAME}
+          make ${{ env.DEFCONFIG_NAME }}
 
       - name: Build toolchain and SDK
-        working-directory: buildroot-${BUILDROOT_VERSION}
+        working-directory: buildroot-${{ env.BUILDROOT_VERSION }}
         run: |
-          # GitHub 托管运行器为 2 核，使用 -j2 避免内存不足
           make toolchain -j2
           make sdk -j2
 
       - name: Prepare SDK archive
-        working-directory: buildroot-${BUILDROOT_VERSION}
+        working-directory: buildroot-${{ env.BUILDROOT_VERSION }}
         run: |
           SDK_ARCHIVE=$(ls output/images/*sdk*.tar.gz | head -1)
           if [ -z "$SDK_ARCHIVE" ]; then
@@ -133,10 +107,10 @@ EOF
         run: |
           cat > dictpen-env.sh << 'EOF'
 #!/bin/bash
-export PATH="$PWD/buildroot-${BUILDROOT_VERSION}/output/host/usr/bin:$PATH"
+export PATH="$PWD/buildroot-${{ env.BUILDROOT_VERSION }}/output/host/usr/bin:$PATH"
 export CROSS_COMPILE="aarch64-linux-"
 export ARCH="arm64"
-export SYSROOT="$PWD/buildroot-${BUILDROOT_VERSION}/output/host/usr/aarch64-buildroot-linux-gnu/sysroot"
+export SYSROOT="$PWD/buildroot-${{ env.BUILDROOT_VERSION }}/output/host/usr/aarch64-buildroot-linux-gnu/sysroot"
 export CC="aarch64-linux-gcc --sysroot=\$SYSROOT"
 export CXX="aarch64-linux-g++ --sysroot=\$SYSROOT"
 export LD="aarch64-linux-ld --sysroot=\$SYSROOT"
