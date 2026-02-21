@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-toolchain:
-    runs-on: ubuntu-20.04  # 切换到 Ubuntu 20.04 以避免 m4 编译问题
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
             flex \
             bison \
             libelf-dev \
-            python \
+            python2 \
             python3 \
             file \
             gawk \
@@ -50,6 +50,9 @@ jobs:
             locales \
             curl \
             ca-certificates
+          
+          # 创建 python 指向 python2 的符号链接
+          sudo ln -sf /usr/bin/python2 /usr/bin/python
           
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
@@ -122,24 +125,52 @@ jobs:
           BR2_PACKAGE_HOST_MTOOLS=y
           EOF
 
-      - name: Create m4 patch for Ubuntu 20.04 compatibility
+      - name: Create comprehensive m4 patch for Ubuntu 22.04
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           mkdir -p package/m4
           
-          # 创建补丁文件来解决 m4 编译问题
-          cat > package/m4/0001-fix-signal-h-compat.patch << 'EOF'
+          # 创建完整的补丁文件来解决 Ubuntu 22.04 上的 m4 编译问题
+          cat > package/m4/0001-fix-c-stack-for-modern-systems.patch << 'EOF'
           --- a/lib/c-stack.c
           +++ b/lib/c-stack.c
-          @@ -52,7 +52,7 @@
+          @@ -16,16 +16,17 @@
+              along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
            
-          #if HAVE_LIBSIGSEGV
-          # include <sigsegv.h>
+           /* Written by Paul Eggert.  */
+           
+           #include <config.h>
+           
+          -#include "c-stack.h"
+          -
+           #include <errno.h>
+           #include <signal.h>
+           #include <stdbool.h>
+           #include <stdlib.h>
+           #include <string.h>
+           #include <unistd.h>
+           
+          +#include "c-stack.h"
+          +
+           #if HAVE_SETRLIMIT
+           /* FIXME: This use of HAVE_SETRLIMIT is wrong, as it checks for the
+              function, not the symbol.  But glibc defines setrlimit unconditionally,
+          @@ -49,15 +50,9 @@
+           #endif
+           #endif
+           
+          -#if HAVE_LIBSIGSEGV
+          -# include <sigsegv.h>
           -#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
-          +#elif defined HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
-           /* libsigsegv 2.6 through 2.8 have a bug where sigsegv_handler fails
-              to install the preallocated stack for the overflow handler.  */
-          # else
+          -/* libsigsegv 2.6 through 2.8 have a bug where sigsegv_handler fails
+          -   to install the preallocated stack for the overflow handler.  */
+          -# else
+           # define LIBSIGSEGV_PREALLOC_STACK 1
+           # include <sigsegv.h>
+          -#endif
+           
+           #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T
+           # include <ucontext.h>
           EOF
 
       - name: Initialize Buildroot and Configure
@@ -156,7 +187,10 @@ jobs:
           # 创建空的 .br-external.mk 文件
           touch output/.br-external.mk
           
-          # 现在应用我们的自定义配置
+          # 先运行默认配置初始化
+          make defconfig
+          
+          # 然后应用我们的自定义配置
           make dictpen_p5_defconfig
           
           # 验证配置
@@ -173,6 +207,11 @@ jobs:
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           echo "Starting toolchain build (this will take 2-3 hours)..."
+          
+          # 先尝试单独构建 m4 以确保补丁生效
+          make host-m4 -j2 || true
+          
+          # 然后构建完整的 toolchain
           make toolchain -j2
         env:
           FORCE_UNSAFE_CONFIGURE: 1
