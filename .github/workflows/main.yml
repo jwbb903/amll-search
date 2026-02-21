@@ -1,30 +1,24 @@
 name: "Build Youdao DictPen: Build Youdao DictPen P5 Toolchain"
 
 on:
-  # 手动触发
   workflow_dispatch:
-  
-  # 定时触发（每周日凌晨）
   schedule:
     - cron: '0 0 * * 0'
-  
-  # 推送触发（可选）
   push:
     branches: [main, master]
     paths:
       - '.github/workflows/build-dictpen-toolchain.yml'
       - 'configs/**'
 
-# 权限配置
 permissions:
   contents: write
   packages: write
 
 jobs:
   build-toolchain:
-    runs-on: ubuntu-22.04  # 使用 Ubuntu 20.04 匹配旧版 Buildroot
+    runs-on: ubuntu-22.04
     
-    timeout-minutes: 360  # 6小时超时
+    timeout-minutes: 360
     
     env:
       BR_VERSION: "2018.02-rc3"
@@ -32,17 +26,11 @@ jobs:
       TOOLCHAIN_NAME: "dictpen-p5-toolchain"
       
     steps:
-      # ==========================================
-      # 步骤 1: 检出代码
-      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ==========================================
-      # 步骤 2: 安装依赖
-      # ==========================================
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -78,19 +66,13 @@ jobs:
             device-tree-compiler \
             locales
 
-          # 手动创建 python 软链接指向 python2
+          # 手动创建 python 软链接
           sudo ln -sf /usr/bin/python2 /usr/bin/python
-          
-          # 验证
           python --version
 
-          # 设置 locale（Buildroot 需要）
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
 
-      # ==========================================
-      # 步骤 3: 缓存下载文件（加速重建）
-      # ==========================================
       - name: Cache downloads
         uses: actions/cache@v3
         with:
@@ -99,9 +81,6 @@ jobs:
           restore-keys: |
             buildroot-dl-${{ env.BR_VERSION }}-
 
-      # ==========================================
-      # 步骤 4: 下载 Buildroot
-      # ==========================================
       - name: Download Buildroot
         run: |
           mkdir -p ~/buildroot
@@ -112,22 +91,20 @@ jobs:
             wget -q --show-progress "${BR_URL}"
           fi
           
-          echo "Extracting..."
           tar -xzf "buildroot-${BR_VERSION}.tar.gz"
-          
           echo "Buildroot location: $(pwd)/buildroot-${BR_VERSION}"
 
-      # ==========================================
-      # 步骤 5: 创建配置文件
-      # ==========================================
-      - name: Create defconfig
+      - name: Create and load config
         run: |
           cd ~/buildroot/buildroot-${BR_VERSION}
           
-          mkdir -p configs
+          # 清理并创建输出目录
+          make clean 2>/dev/null || true
+          rm -rf output
+          mkdir -p output
           
-          cat > configs/dictpen_p5_defconfig << 'EOF'
-          # Buildroot 2018.02-rc3 for Youdao DictPen P5 (RK3566)
+          # 直接创建 .config 文件
+          cat > .config << 'EOF'
           BR2_aarch64=y
           BR2_cortex_a55=y
           BR2_ARM_FPU_VFPV4=y
@@ -151,92 +128,51 @@ jobs:
           BR2_PACKAGE_HOST_GDB=y
           EOF
           
-          echo "Configuration created:"
-          cat configs/dictpen_p5_defconfig
-
-      # ==========================================
-      # 步骤 6: 加载配置
-      # ==========================================
-      - name: Load defconfig
-        run: |
-          cd ~/buildroot/buildroot-${BR_VERSION}
-          make dictpen_p5_defconfig
+          # 验证并扩展配置
+          make oldconfig
           
-          echo "Full config saved to .config"
+          echo "Configuration loaded:"
           grep -E "^(BR2_|# BR2_)" .config | head -50
 
-      # ==========================================
-      # 步骤 7: 编译工具链（核心步骤）
-      # ==========================================
       - name: Build toolchain
         run: |
           cd ~/buildroot/buildroot-${BR_VERSION}
           
-          echo "Starting toolchain build..."
-          echo "This will take 2-4 hours..."
-          echo "Start time: $(date)"
-          
-          # 使用所有可用 CPU 核心
+          echo "Starting toolchain build at $(date)"
           make toolchain -j$(nproc) 2>&1 | tee build.log
+          echo "Finished at $(date)"
           
-          echo "End time: $(date)"
-          
-          # 检查输出
           ls -la output/host/usr/bin/ | head -20
 
-      # ==========================================
-      # 步骤 8: 验证工具链
-      # ==========================================
       - name: Verify toolchain
         run: |
           cd ~/buildroot/buildroot-${BR_VERSION}
-          
           export PATH="$(pwd)/output/host/usr/bin:$PATH"
           
           echo "=== GCC Version ==="
           aarch64-linux-gcc --version
           
           echo ""
-          echo "=== G++ Version ==="
-          aarch64-linux-g++ --version
-          
-          echo ""
-          echo "=== GDB Version ==="
-          aarch64-linux-gdb --version | head -1
-          
-          echo ""
-          echo "=== Sysroot Contents ==="
-          ls -la output/host/usr/aarch64-buildroot-linux-gnu/sysroot/lib/ | head -10
-          
-          echo ""
           echo "=== Testing Compilation ==="
-          cat > /tmp/test.c << 'TESTEOF'
+          cat > /tmp/test.c << 'EOF'
           #include <stdio.h>
           int main() {
-              printf("Hello from GitHub Actions!\\n");
+              printf("Hello from GitHub Actions!\n");
               return 0;
           }
-          TESTEOF
+          EOF
           
           aarch64-linux-gcc -o /tmp/test-arm64 /tmp/test.c
           file /tmp/test-arm64
 
-      # ==========================================
-      # 步骤 9: 生成 SDK 包
-      # ==========================================
       - name: Create SDK package
         run: |
           cd ~/buildroot/buildroot-${BR_VERSION}
           
           echo "Creating SDK package..."
-          # Buildroot 2018.02 使用 sdk-all 而不是 sdk
-          make sdk-all || make sdk || echo "SDK target not available, skipping..."
+          make sdk-all 2>/dev/null || make sdk 2>/dev/null || echo "SDK target not available"
           
-          echo "SDK created:"
-          ls -lh output/images/*sdk*.tar.gz 2>/dev/null || echo "SDK not found in images/"
-          
-          # 同时打包整个工具链
-          echo "Creating full toolchain archive..."
+          # 打包工具链
           tar -czf ${TOOLCHAIN_NAME}-full.tar.gz \
             -C output/host/usr \
             bin/ \
@@ -244,57 +180,24 @@ jobs:
           
           ls -lh ${TOOLCHAIN_NAME}-full.tar.gz
 
-      # ==========================================
-      # 步骤 10: 创建环境脚本
-      # ==========================================
       - name: Create environment script
         run: |
           cd ~/buildroot/buildroot-${BR_VERSION}
           
-          cat > setup-env.sh << 'EOF'
+          cat > ${TOOLCHAIN_NAME}-setup-env.sh << 'EOF'
           #!/bin/bash
-          # Youdao DictPen P5 (RK3566) Toolchain Environment
-          # Generated by GitHub Actions
-          
           TOOLCHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          
-          if [ ! -d "$TOOLCHAIN_DIR/bin" ]; then
-              echo "Error: Toolchain not found in $TOOLCHAIN_DIR"
-              exit 1
-          fi
-          
           export PATH="$TOOLCHAIN_DIR/bin:$PATH"
           export CROSS_COMPILE="aarch64-linux-"
           export ARCH="arm64"
           export SYSROOT="$TOOLCHAIN_DIR/aarch64-buildroot-linux-gnu/sysroot"
-          
           export CC="aarch64-linux-gcc --sysroot=$SYSROOT"
           export CXX="aarch64-linux-g++ --sysroot=$SYSROOT"
-          export LD="aarch64-linux-ld --sysroot=$SYSROOT"
-          export AR="aarch64-linux-ar"
-          export AS="aarch64-linux-as"
-          export NM="aarch64-linux-nm"
-          export STRIP="aarch64-linux-strip"
-          export RANLIB="aarch64-linux-ranlib"
-          export OBJCOPY="aarch64-linux-objcopy"
-          export OBJDUMP="aarch64-linux-objdump"
-          export GDB="aarch64-linux-gdb"
-          
-          echo "========================================"
-          echo "Youdao DictPen P5 Toolchain Activated"
-          echo "========================================"
-          echo "GCC: $(aarch64-linux-gcc --version | head -1)"
-          echo "Target: aarch64-linux-gnu"
-          echo "Sysroot: $SYSROOT"
-          echo "========================================"
+          echo "Toolchain activated: $(aarch64-linux-gcc --version | head -1)"
           EOF
           
-          chmod +x setup-env.sh
-          cp setup-env.sh ${TOOLCHAIN_NAME}-setup-env.sh
+          chmod +x ${TOOLCHAIN_NAME}-setup-env.sh
 
-      # ==========================================
-      # 步骤 11: 上传到 Artifact
-      # ==========================================
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -302,59 +205,9 @@ jobs:
           path: |
             ~/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-full.tar.gz
             ~/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-setup-env.sh
-            ~/buildroot/buildroot-*/output/images/*sdk*.tar.gz
           retention-days: 30
-          compression-level: 0  # 已经压缩过了
+          compression-level: 0
 
-      # ==========================================
-      # 步骤 12: 创建 Release（可选）
-      # ==========================================
-      - name: Create Release
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: toolchain-${{ env.BR_VERSION }}-${{ github.run_number }}
-          name: DictPen P5 Toolchain ${{ env.BR_VERSION }} (Build ${{ github.run_number }})
-          body: |
-            ## Youdao DictPen P5 (RK3566) Cross Compile Toolchain
-            
-            ### 信息
-            - **Buildroot Version**: ${{ env.BR_VERSION }}
-            - **GCC Version**: 7.x
-            - **glibc Version**: 2.27-2.29
-            - **Target**: aarch64-linux-gnu (ARM64)
-            - **Build Date**: ${{ github.event.head_commit.timestamp || github.event.created_at }}
-            
-            ### 包含文件
-            - `${{ env.TOOLCHAIN_NAME }}-full.tar.gz` - 完整工具链
-            - `${{ env.TOOLCHAIN_NAME }}-setup-env.sh` - 环境设置脚本
-            - `*-sdk-*.tar.gz` - Buildroot SDK 包
-            
-            ### 使用方法
-            ```bash
-            # 下载并解压
-            tar -xzf ${{ env.TOOLCHAIN_NAME }}-full.tar.gz
-            cd aarch64-buildroot-linux-gnu/
-            
-            # 激活环境
-            source setup-env.sh
-            
-            # 编译
-            aarch64-linux-gcc -o myapp myapp.c
-            ```
-            
-            ### 注意事项
-            设备实际运行 glibc 2.29，如果编译的程序无法运行，请使用 `--sysroot` 指向设备提取的库。
-          files: |
-            ${{ github.workspace }}/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-full.tar.gz
-            ${{ github.workspace }}/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-setup-env.sh
-            ${{ github.workspace }}/buildroot/buildroot-*/output/images/*sdk*.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ==========================================
-      # 步骤 13: 保存构建日志
-      # ==========================================
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
