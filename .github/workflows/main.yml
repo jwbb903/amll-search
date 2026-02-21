@@ -5,7 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build-toolchain:
@@ -83,19 +83,6 @@ jobs:
             ${{ runner.os }}-buildroot-host-2018.02-rc3-
             ${{ runner.os }}-buildroot-host-
 
-      - name: Cache Buildroot build artifacts
-        id: cache-build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/buildroot-work/buildroot-2018.02-rc3/output/build
-            ~/buildroot-work/buildroot-2018.02-rc3/output/staging
-            ~/buildroot-work/buildroot-2018.02-rc3/output/target
-          key: ${{ runner.os }}-buildroot-build-2018.02-rc3-${{ hashFiles('~/buildroot-work/buildroot-2018.02-rc3/configs/dictpen_p5_defconfig') }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-buildroot-build-2018.02-rc3-
-            ${{ runner.os }}-buildroot-build-
-
       - name: Download Buildroot 2018.02-rc3
         run: |
           mkdir -p ~/buildroot-work
@@ -107,10 +94,12 @@ jobs:
             tar -xzf buildroot-2018.02-rc3.tar.gz
           fi
 
-      - name: Create defconfig
+      - name: Create defconfig file
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           mkdir -p configs
+          
+          # 创建完整的 defconfig 文件
           cat > configs/dictpen_p5_defconfig << 'EOF'
           # Buildroot 2018.02-rc3 for Youdao DictPen P5 (RK3566)
           
@@ -130,7 +119,7 @@ jobs:
           BR2_TOOLCHAIN_HAS_SSP=y
           BR2_TOOLCHAIN_HAS_NATIVE_RPC=y
           
-          # System
+          # System configuration
           BR2_USE_MMU=y
           BR2_TARGET_OPTIMIZATION="-pipe -O2"
           BR2_TARGET_GENERIC_GETTY=y
@@ -143,89 +132,138 @@ jobs:
           BR2_SDK=y
           BR2_PACKAGE_HOST_GDB=y
           
-          # Additional useful tools
+          # Additional useful host tools
           BR2_PACKAGE_HOST_DOSFSTOOLS=y
           BR2_PACKAGE_HOST_GENEXT2FS=y
           BR2_PACKAGE_HOST_MTOOLS=y
           EOF
+          
+          echo "Defconfig file created successfully"
+          ls -la configs/
 
       - name: Configure Buildroot
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
+          
+          # 首先清理任何旧的配置
+          rm -f .config
+          rm -rf output
+          
+          # 确保基础目录结构存在
+          mkdir -p output
+          
+          # 设置默认配置
+          echo "Setting default configuration..."
           make dictpen_p5_defconfig
+          
+          # 验证配置是否成功
+          if [ -f .config ]; then
+            echo "✅ Configuration successful"
+            echo "Configuration summary:"
+            grep "^BR2_" .config | head -20
+          else
+            echo "❌ Configuration failed"
+            exit 1
+          fi
 
       - name: Build toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          # 使用 -j2 限制并行度，避免 GitHub Actions 资源不足
-          # 如果缓存命中，可能只需要增量编译
+          
+          # 显示当前配置
+          echo "Current configuration:"
+          make show-targets
+          
+          # 开始构建 toolchain
+          echo "Starting toolchain build..."
           make toolchain -j2
         env:
-          FORCE_UNSAFE_CONFIGURE: 1  # 允许以 root 身份运行（GitHub Actions 容器）
+          FORCE_UNSAFE_CONFIGURE: 1
 
       - name: Verify toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
+          
+          # 检查 toolchain 是否生成
+          if [ ! -d output/host/usr/bin ]; then
+            echo "❌ Toolchain not found!"
+            exit 1
+          fi
+          
           export PATH="$PWD/output/host/usr/bin:$PATH"
+          
           echo "=== Toolchain version ==="
           aarch64-linux-gcc --version
           
-          echo "=== GCC default target ==="
-          aarch64-linux-gcc -v 2>&1 | grep "Target:"
+          echo "=== Checking compiler target ==="
+          aarch64-linux-gcc -dumpmachine
           
-          echo "=== GCC configure options ==="
-          aarch64-linux-gcc -v 2>&1 | grep "Configured with:" | head -1
-          
-          # 创建测试程序
+          # 创建并编译测试程序
           cat > /tmp/test.c << 'EOF'
           #include <stdio.h>
+          #include <stdlib.h>
+          
           int main() {
-              printf("Hello, DictPen P5!\n");
+              printf("Hello from DictPen P5!\n");
+              printf("Architecture: %s\n", 
+  #ifdef __aarch64__
+                     "ARM64"
+  #else
+                     "Unknown"
+  #endif
+              );
               return 0;
           }
           EOF
           
           echo "=== Compiling test program ==="
           aarch64-linux-gcc -o /tmp/test-arm64 /tmp/test.c
-          file /tmp/test-arm64
           
-          echo "=== Checking for Cortex-A55 optimization ==="
-          aarch64-linux-gcc -Q --help=target | grep mcpu | grep a55 || echo "Note: mcpu=cortex-a55 may not be directly supported, using march=armv8-a instead"
+          echo "=== Test program info ==="
+          file /tmp/test-arm64
           
           echo "✅ Toolchain verification passed!"
 
       - name: Create SDK package
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
+          
+          # 创建 SDK
           make sdk
           
-          # 查找生成的 SDK 包
-          SDK_PACKAGE=$(ls -t output/images/*sdk*.tar.gz 2>/dev/null | head -1)
-          if [ -f "$SDK_PACKAGE" ]; then
-            echo "SDK_PACKAGE=$SDK_PACKAGE" >> $GITHUB_ENV
+          # 查找 SDK 包
+          SDK_PACKAGE=$(find output/images -name "*sdk*.tar.gz" -type f | head -1)
+          if [ -n "$SDK_PACKAGE" ]; then
             echo "SDK package created: $SDK_PACKAGE"
+            cp "$SDK_PACKAGE" .
           else
-            echo "Warning: SDK package not found, creating archive manually"
-            tar -czf output/images/aarch64-buildroot-linux-gnu_sdk-buildroot.tar.gz -C output/host .
-            echo "SDK_PACKAGE=output/images/aarch64-buildroot-linux-gnu_sdk-buildroot.tar.gz" >> $GITHUB_ENV
+            echo "Creating manual SDK package..."
+            tar -czf aarch64-buildroot-linux-gnu_sdk.tar.gz -C output/host .
           fi
 
       - name: Create environment script
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          cat > output/dictpen-env.sh << 'EOF'
+          
+          cat > dictpen-env.sh << 'EOF'
           #!/bin/bash
           # DictPen P5 Toolchain environment script
           
-          SCRIPTPATH="$( cd "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
-          export PATH="$SCRIPTPATH/host/usr/bin:$PATH"
+          TOOLCHAIN_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
+          
+          export PATH="$TOOLCHAIN_DIR/output/host/usr/bin:$PATH"
           export CROSS_COMPILE="aarch64-linux-"
           export ARCH="arm64"
-          export SYSROOT="$SCRIPTPATH/host/usr/aarch64-buildroot-linux-gnu/sysroot"
           
-          export CC="aarch64-linux-gcc --sysroot=\$SYSROOT"
-          export CXX="aarch64-linux-g++ --sysroot=\$SYSROOT"
-          export LD="aarch64-linux-ld --sysroot=\$SYSROOT"
+          if [ -d "$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu/sysroot" ]; then
+              export SYSROOT="$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu/sysroot"
+          else
+              export SYSROOT="$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu"
+          fi
+          
+          export CC="aarch64-linux-gcc --sysroot=$SYSROOT"
+          export CXX="aarch64-linux-g++ --sysroot=$SYSROOT"
+          export LD="aarch64-linux-ld"
           export AR="aarch64-linux-ar"
           export AS="aarch64-linux-as"
           export NM="aarch64-linux-nm"
@@ -233,68 +271,35 @@ jobs:
           export RANLIB="aarch64-linux-ranlib"
           export OBJCOPY="aarch64-linux-objcopy"
           export OBJDUMP="aarch64-linux-objdump"
-          export GDB="aarch64-linux-gdb"
           
           echo "========================================="
           echo "DictPen P5 Toolchain Ready!"
           echo "========================================="
-          aarch64-linux-gcc --version | head -1
-          echo "CROSS_COMPILE: $CROSS_COMPILE"
-          echo "SYSROOT: $SYSROOT"
+          echo "Toolchain: $TOOLCHAIN_DIR"
+          echo "Target: aarch64-buildroot-linux-gnu"
+          echo "GCC: $(aarch64-linux-gcc --version | head -1)"
           echo ""
-          echo "Example:"
+          echo "Example usage:"
           echo "  \$CC -o hello hello.c"
           echo "========================================="
           EOF
           
-          chmod +x output/dictpen-env.sh
-          
-          # 打包完整的 toolchain
-          cd output
-          tar -czf ../dictpen-p5-toolchain-complete.tar.gz host/ dictpen-env.sh
-          cd ..
+          chmod +x dictpen-env.sh
 
-      - name: Create installation instructions
+      - name: Package toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          cat > README-toolchain.md << 'EOF'
-          # DictPen P5 Toolchain
-
-          ## 安装说明
-
-          1. 解压工具链：
-             ```bash
-             tar -xzf dictpen-p5-toolchain-complete.tar.gz -C /opt/
-             ```
-
-          2. 设置环境变量：
-             ```bash
-             source /opt/dictpen-p5-toolchain/dictpen-env.sh
-             ```
-             或者永久添加到 ~/.bashrc：
-             ```bash
-             echo "source /opt/dictpen-p5-toolchain/dictpen-env.sh" >> ~/.bashrc
-             ```
-
-          3. 编译测试程序：
-             ```bash
-             $CC -o hello hello.c
-             file hello  # 应该显示 ARM aarch64
-             ```
-
-          ## 工具链信息
-
-          - 架构：ARM64 (aarch64)
-          - 优化：Cortex-A55
-          - C库：glibc
-          - GCC版本：7.5.0
-          - 内核头文件：4.19
-
-          ## 目录结构
-
-          - `host/` - 完整的工具链
-          - `dictpen-env.sh` - 环境设置脚本
-          EOF
+          
+          # 创建完整的工具链包
+          tar -czf dictpen-p5-toolchain-complete.tar.gz \
+              output/host \
+              dictpen-env.sh \
+              configs/dictpen_p5_defconfig \
+              README.md \
+              --transform 's|^|dictpen-p5-toolchain/|'
+          
+          echo "✅ Toolchain packaged: dictpen-p5-toolchain-complete.tar.gz"
+          ls -lh *.tar.gz
 
       - name: Upload toolchain artifacts
         uses: actions/upload-artifact@v4
@@ -302,8 +307,8 @@ jobs:
           name: dictpen-p5-toolchain
           path: |
             ~/buildroot-work/buildroot-2018.02-rc3/dictpen-p5-toolchain-complete.tar.gz
-            ~/buildroot-work/buildroot-2018.02-rc3/output/images/*sdk*.tar.gz
-            ~/buildroot-work/buildroot-2018.02-rc3/README-toolchain.md
+            ~/buildroot-work/buildroot-2018.02-rc3/aarch64-buildroot-linux-gnu_sdk*.tar.gz
+            ~/buildroot-work/buildroot-2018.02-rc3/dictpen-env.sh
           retention-days: 30
           if-no-files-found: warn
 
@@ -315,7 +320,7 @@ jobs:
           path: |
             ~/buildroot-work/buildroot-2018.02-rc3/output/build/**/*.log
             ~/buildroot-work/buildroot-2018.02-rc3/output/build/**/config.log
-            ~/buildroot-work/buildroot-2018.02-rc3/output/build/**/build.log
+            ~/buildroot-work/buildroot-2018.02-rc3/config.log
           retention-days: 7
 
       - name: Display build summary
@@ -327,6 +332,11 @@ jobs:
           echo "- **提交**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **分支**: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
           echo "- **运行ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 工具链信息" >> $GITHUB_STEP_SUMMARY
+          echo "- **架构**: ARM64 Cortex-A55" >> $GITHUB_STEP_SUMMARY
+          echo "- **C库**: glibc" >> $GITHUB_STEP_SUMMARY
+          echo "- **GCC版本**: 7.5.0" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 下载" >> $GITHUB_STEP_SUMMARY
           echo "在 Actions 页面下载以下工件：" >> $GITHUB_STEP_SUMMARY
