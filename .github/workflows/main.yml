@@ -124,75 +124,186 @@ jobs:
           BR2_PACKAGE_HOST_MTOOLS=y
           EOF
 
-      - name: Configure Buildroot with system m4
+      - name: Initialize Buildroot (without host/usr interference)
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 创建目录结构
+          # 只创建必要的顶层输出目录，不创建 host/usr 子目录
           mkdir -p output/build
-          mkdir -p output/host/usr/bin
-          mkdir -p output/staging
-          mkdir -p output/target
           mkdir -p output/images
+          mkdir -p output/target
+          mkdir -p output/staging
           
           touch output/.br-external.mk
           
-          # 应用配置
+          # 基础配置
           make defconfig
           make dictpen_p5_defconfig
-          
-          # 修改配置，禁用 host-m4 构建
-          echo "BR2_PACKAGE_HOST_M4=n" >> .config
           
           # 验证配置
           if [ -f .config ]; then
             echo "✅ Configuration successful"
-            echo "=== Configuration Summary ==="
             grep "^BR2_" .config | grep -v "^#" | head -20
           else
             echo "❌ Configuration failed"
             exit 1
           fi
 
-      - name: Fix m4 dependency
+      - name: Manually patch host-m4 source
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 确保 host-m4 不会被构建
-          rm -rf package/m4
-          mkdir -p package/m4
+          # 先解压 host-m4（如果尚未解压）
+          make host-m4-extract || true
           
-          # 创建一个空的 m4 包，让它什么都不做
-          cat > package/m4/m4.mk << 'EOF'
-          # 这是一个空的 m4 包，使用系统 m4
-          HOST_M4_DEPENDENCIES = 
-          HOST_M4_CONFIGURE_CMDS = 
-          HOST_M4_BUILD_CMDS = 
-          HOST_M4_INSTALL_CMDS = 
+          # 进入源码目录
+          M4_SRC_DIR="output/build/host-m4-1.4.18"
+          if [ -d "$M4_SRC_DIR" ]; then
+            echo "Patching c-stack.c in $M4_SRC_DIR"
+            cat > "$M4_SRC_DIR/lib/c-stack.c" << 'EOF'
+          /* c-stack.c - stack overflow handling
           
-          $(eval $(host-generic-package))
+             Copyright (C) 2002, 2004, 2006-2016 Free Software Foundation, Inc.
+          
+             This program is free software: you can redistribute it and/or modify
+             it under the terms of the GNU General Public License as published by
+             the Free Software Foundation; either version 3 of the License, or
+             (at your option) any later version.
+          
+             This program is distributed in the hope that it will be useful,
+             but WITHOUT ANY WARRANTY; without even the implied warranty of
+             MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+             GNU General Public License for more details.
+          
+             You should have received a copy of the GNU General Public License
+             along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+          
+          /* Written by Paul Eggert.  */
+          
+          #include <config.h>
+          
+          #include <errno.h>
+          #include <signal.h>
+          #include <stdbool.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          
+          #include "c-stack.h"
+          
+          #if HAVE_SETRLIMIT
+          /* FIXME: This use of HAVE_SETRLIMIT is wrong, as it checks for the
+             function, not the symbol.  But glibc defines setrlimit unconditionally,
+             at least in conservative environments.  */
+          # include <sys/time.h>
+          # include <sys/resource.h>
+          #endif
+          
+          #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T
+          # include <ucontext.h>
+          #endif
+          
+          #include <sigsegv.h>
+          
+          #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T
+          /* Storage for the alternate signal stack.  */
+          static union
+          {
+            char buffer[SIGSTKSZ];
+            stack_t ss;
+          } alternate_signal_stack;
+          
+          static void
+          null_action (int signo __attribute__ ((unused)),
+                       siginfo_t *info __attribute__ ((unused)),
+                       void *context __attribute__ ((unused)))
+          {
+          }
+          #endif /* HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T */
+          
+          /* The user-specified action.  */
+          static void (* volatile action) (int) = NULL;
+          
+          static void
+          segv_handler (int signo __attribute__ ((unused)),
+                        siginfo_t *info __attribute__ ((unused)),
+                        void *context __attribute__ ((unused)))
+          {
+          #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T
+            ucontext_t const *uc = context;
+          
+            /* If the faulting address is within the stack, or within the
+               kernel's specially designated stack overflow area, assume that
+               this is a stack overflow.  */
+            if (0 < uc->uc_stack.ss_size)
+              {
+                char *const stack_base = (char *) uc->uc_stack.ss_sp;
+                size_t stack_size = uc->uc_stack.ss_size;
+                char *const fault = (char *) info->si_addr;
+                size_t page_size = sysconf (_SC_PAGE_SIZE);
+                if (page_size == (size_t) -1)
+                  page_size = 4096;
+          
+                if (stack_base <= fault && fault < stack_base + stack_size + page_size)
+                  {
+                    if (action)
+                      action (SIGSEGV);
+                    else
+                      {
+                        /* Reset the handler to the default and re-raise the
+                           signal.  */
+                        struct sigaction act;
+                        act.sa_handler = SIG_DFL;
+                        sigemptyset (&act.sa_mask);
+                        act.sa_flags = 0;
+                        sigaction (SIGSEGV, &act, NULL);
+                        raise (SIGSEGV);
+                      }
+                  }
+              }
+          #endif /* HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T */
+          }
+          
+          int
+          c_stack_action (void (*func) (int))
+          {
+            int r = sigsegv_install_handler (segv_handler);
+            if (r == 0)
+              {
+                action = func;
+          
+          #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T
+                /* Use libsigsegv to set up an alternate stack.  */
+                r = sigsegv_init (&alternate_signal_stack.ss);
+                if (r == 0)
+                  {
+                    alternate_signal_stack.ss.ss_flags = 0;
+                    if (sigaltstack (&alternate_signal_stack.ss, NULL) < 0)
+                      r = -1;
+                  }
+          #endif /* HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T */
+              }
+          
+            return r;
+          }
           EOF
-          
-          # 创建一个空的 Config.in
-          touch package/m4/Config.in
-          
-          # 创建符号链接到系统 m4（如果需要）
-          if [ ! -f output/host/usr/bin/m4 ]; then
-            cp /usr/bin/m4 output/host/usr/bin/m4
+            # 标记为已打补丁（防止再次尝试应用补丁）
+            touch "$M4_SRC_DIR/.stamp_patched"
+            echo "✅ host-m4 manually patched"
+          else
+            echo "⚠️ host-m4 source not found, will be handled during build"
           fi
-          
-          echo "✅ m4 package disabled"
 
       - name: Build toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           echo "Starting toolchain build (this will take 2-3 hours)..."
           
-          # 显示配置
-          echo "=== Build Configuration ==="
+          # 显示构建目标
+          echo "=== Build Targets ==="
           make show-targets || true
           
-          # 构建 toolchain
+          # 开始构建
           make toolchain -j2
         env:
           FORCE_UNSAFE_CONFIGURE: 1
