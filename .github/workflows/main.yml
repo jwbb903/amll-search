@@ -50,7 +50,7 @@ jobs:
             locales \
             curl \
             ca-certificates \
-            m4  # 安装系统 m4，用于替代 host-m4
+            m4  # 系统 m4，用于替代 host-m4
           
           sudo ln -sf /usr/bin/python2 /usr/bin/python
           sudo locale-gen en_US.UTF-8
@@ -149,20 +149,50 @@ jobs:
             exit 1
           fi
 
-      - name: Fake host-m4 build (use system m4)
+      - name: Replace host-m4 build with system m4
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
           # 彻底删除可能存在的旧 host-m4 构建目录
           rm -rf output/build/host-m4-1.4.18
           
-          # 创建空的构建目录，并放入所有必需的 stamp 文件
+          # 修改 package/m4/m4.mk，使用系统 m4
+          cat > package/m4/m4.mk << 'EOF'
+          ################################################################################
+          #
+          # m4
+          #
+          ################################################################################
+          
+          HOST_M4_VERSION = 1.4.18
+          HOST_M4_SOURCE = m4-$(HOST_M4_VERSION).tar.xz
+          HOST_M4_SITE = $(BR2_GNU_MIRROR)/m4
+          
+          define HOST_M4_CONFIGURE_CMDS
+              # 无需配置
+              true
+          endef
+          
+          define HOST_M4_BUILD_CMDS
+              # 无需构建
+              true
+          endef
+          
+          define HOST_M4_INSTALL_CMDS
+              mkdir -p $(HOST_DIR)/usr/bin
+              cp /usr/bin/m4 $(HOST_DIR)/usr/bin/m4
+          endef
+          
+          $(eval $(host-generic-package))
+          EOF
+          
+          # 创建空的构建目录并放置 stamp 文件，确保 Buildroot 认为已构建
           mkdir -p output/build/host-m4-1.4.18
           touch output/build/host-m4-1.4.18/.stamp_configured
           touch output/build/host-m4-1.4.18/.stamp_patched
           touch output/build/host-m4-1.4.18/.stamp_built
           
-          echo "✅ host-m4 faked, will use system m4"
+          echo "✅ host-m4 replaced with system m4"
 
       - name: Build toolchain
         run: |
@@ -173,7 +203,7 @@ jobs:
           echo "=== Build Targets ==="
           make show-targets || true
           
-          # 开始构建 toolchain（host-m4 已被跳过）
+          # 开始构建 toolchain（host-m4 将被我们的假构建替代）
           make toolchain -j2
         env:
           FORCE_UNSAFE_CONFIGURE: 1
