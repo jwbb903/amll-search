@@ -50,7 +50,7 @@ jobs:
             locales \
             curl \
             ca-certificates \
-            m4  # 安装系统 m4
+            m4
           
           sudo ln -sf /usr/bin/python2 /usr/bin/python
           sudo locale-gen en_US.UTF-8
@@ -124,13 +124,13 @@ jobs:
           BR2_PACKAGE_HOST_MTOOLS=y
           EOF
 
-      - name: Disable host-m4 build and use system m4
+      - name: Configure Buildroot with system m4
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
           # 创建目录结构
           mkdir -p output/build
-          mkdir -p output/host
+          mkdir -p output/host/usr/bin
           mkdir -p output/staging
           mkdir -p output/target
           mkdir -p output/images
@@ -144,25 +144,55 @@ jobs:
           # 修改配置，禁用 host-m4 构建
           echo "BR2_PACKAGE_HOST_M4=n" >> .config
           
-          # 创建符号链接，使用系统 m4
-          mkdir -p output/host/usr/bin
-          ln -sf /usr/bin/m4 output/host/usr/bin/m4
-          
           # 验证配置
           if [ -f .config ]; then
             echo "✅ Configuration successful"
+            echo "=== Configuration Summary ==="
             grep "^BR2_" .config | grep -v "^#" | head -20
           else
             echo "❌ Configuration failed"
             exit 1
           fi
 
+      - name: Fix m4 dependency
+        run: |
+          cd ~/buildroot-work/buildroot-2018.02-rc3
+          
+          # 确保 host-m4 不会被构建
+          rm -rf package/m4
+          mkdir -p package/m4
+          
+          # 创建一个空的 m4 包，让它什么都不做
+          cat > package/m4/m4.mk << 'EOF'
+          # 这是一个空的 m4 包，使用系统 m4
+          HOST_M4_DEPENDENCIES = 
+          HOST_M4_CONFIGURE_CMDS = 
+          HOST_M4_BUILD_CMDS = 
+          HOST_M4_INSTALL_CMDS = 
+          
+          $(eval $(host-generic-package))
+          EOF
+          
+          # 创建一个空的 Config.in
+          touch package/m4/Config.in
+          
+          # 创建符号链接到系统 m4（如果需要）
+          if [ ! -f output/host/usr/bin/m4 ]; then
+            cp /usr/bin/m4 output/host/usr/bin/m4
+          fi
+          
+          echo "✅ m4 package disabled"
+
       - name: Build toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           echo "Starting toolchain build (this will take 2-3 hours)..."
           
-          # 直接构建 toolchain，跳过 host-m4
+          # 显示配置
+          echo "=== Build Configuration ==="
+          make show-targets || true
+          
+          # 构建 toolchain
           make toolchain -j2
         env:
           FORCE_UNSAFE_CONFIGURE: 1
@@ -184,6 +214,7 @@ jobs:
           echo "=== Checking compiler target ==="
           aarch64-linux-gcc -dumpmachine
           
+          # 测试编译
           cat > /tmp/test.c << 'EOF'
           #include <stdio.h>
           int main() {
@@ -192,18 +223,27 @@ jobs:
           }
           EOF
           
+          echo "=== Compiling test program ==="
           aarch64-linux-gcc -o /tmp/test-arm64 /tmp/test.c
+          
+          echo "=== Test program info ==="
           file /tmp/test-arm64
+          
           echo "✅ Toolchain verification passed!"
 
       - name: Create SDK package
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
+          
+          # 尝试创建 SDK
           make sdk || true
           
+          # 查找或创建 SDK 包
           if ls output/images/*sdk*.tar.gz 1> /dev/null 2>&1; then
             cp output/images/*sdk*.tar.gz .
+            echo "SDK package created"
           else
+            echo "Creating manual SDK package..."
             tar -czf aarch64-buildroot-linux-gnu_sdk.tar.gz -C output/host .
           fi
 
@@ -213,6 +253,8 @@ jobs:
           
           cat > dictpen-env.sh << 'EOF'
           #!/bin/bash
+          # DictPen P5 Toolchain environment script
+          
           TOOLCHAIN_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
           
           export PATH="$TOOLCHAIN_DIR/output/host/usr/bin:$PATH"
@@ -227,11 +269,23 @@ jobs:
           
           export CC="aarch64-linux-gcc --sysroot=$SYSROOT"
           export CXX="aarch64-linux-g++ --sysroot=$SYSROOT"
+          export LD="aarch64-linux-ld"
+          export AR="aarch64-linux-ar"
+          export AS="aarch64-linux-as"
+          export NM="aarch64-linux-nm"
+          export STRIP="aarch64-linux-strip"
+          export RANLIB="aarch64-linux-ranlib"
+          export OBJCOPY="aarch64-linux-objcopy"
+          export OBJDUMP="aarch64-linux-objdump"
           
           echo "========================================="
           echo "DictPen P5 Toolchain Ready!"
+          echo "========================================="
           echo "GCC: $(aarch64-linux-gcc --version | head -1)"
-          echo "Example: \$CC -o hello hello.c"
+          echo "SYSROOT: $SYSROOT"
+          echo ""
+          echo "Example:"
+          echo "  \$CC -o hello hello.c"
           echo "========================================="
           EOF
           
@@ -240,11 +294,14 @@ jobs:
       - name: Package toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
+          
+          # 创建完整的工具链包
           tar -czf dictpen-p5-toolchain-complete.tar.gz \
               output/host \
               dictpen-env.sh \
               configs/dictpen_p5_defconfig \
-              .config
+              .config \
+              --transform 's|^|dictpen-p5-toolchain/|'
           
           echo "✅ Toolchain packaged: dictpen-p5-toolchain-complete.tar.gz"
           ls -lh *.tar.gz

@@ -49,7 +49,8 @@ jobs:
             device-tree-compiler \
             locales \
             curl \
-            ca-certificates
+            ca-certificates \
+            m4  # 安装系统 m4
           
           sudo ln -sf /usr/bin/python2 /usr/bin/python
           sudo locale-gen en_US.UTF-8
@@ -123,65 +124,11 @@ jobs:
           BR2_PACKAGE_HOST_MTOOLS=y
           EOF
 
-      - name: Clean any existing m4 patches and build
-        run: |
-          cd ~/buildroot-work/buildroot-2018.02-rc3
-          rm -rf package/m4/*.patch
-          rm -rf output/build/host-m4-*
-          rm -rf dl/m4-1.4.18.tar.xz
-
-      - name: Create m4 patch for Ubuntu 22.04
-        run: |
-          cd ~/buildroot-work/buildroot-2018.02-rc3
-          mkdir -p package/m4
-          
-          cat > package/m4/0001-fix-c-stack-ubuntu22.patch << 'EOF'
-          --- a/lib/c-stack.c
-          +++ b/lib/c-stack.c
-          @@ -16,16 +16,17 @@
-              along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
-           
-           /* Written by Paul Eggert.  */
-           
-           #include <config.h>
-           
-          -#include "c-stack.h"
-          -
-           #include <errno.h>
-           #include <signal.h>
-           #include <stdbool.h>
-           #include <stdlib.h>
-           #include <string.h>
-           #include <unistd.h>
-           
-          +#include "c-stack.h"
-          +
-           #if HAVE_SETRLIMIT
-           /* FIXME: This use of HAVE_SETRLIMIT is wrong, as it checks for the
-              function, not the symbol.  But glibc defines setrlimit unconditionally,
-          @@ -49,15 +50,7 @@
-           #endif
-           #endif
-           
-          -#if HAVE_LIBSIGSEGV
-          -# include <sigsegv.h>
-          -#elif defined HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
-          -/* libsigsegv 2.6 through 2.8 have a bug where sigsegv_handler fails
-          -   to install the preallocated stack for the overflow handler.  */
-          -# else
-          -# define LIBSIGSEGV_PREALLOC_STACK 1
-          -# include <sigsegv.h>
-          -#endif
-          +#include <sigsegv.h>
-           
-           #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T
-           # include <ucontext.h>
-          EOF
-
-      - name: Initialize Buildroot and Configure
+      - name: Disable host-m4 build and use system m4
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
+          # 创建目录结构
           mkdir -p output/build
           mkdir -p output/host
           mkdir -p output/staging
@@ -190,9 +137,18 @@ jobs:
           
           touch output/.br-external.mk
           
+          # 应用配置
           make defconfig
           make dictpen_p5_defconfig
           
+          # 修改配置，禁用 host-m4 构建
+          echo "BR2_PACKAGE_HOST_M4=n" >> .config
+          
+          # 创建符号链接，使用系统 m4
+          mkdir -p output/host/usr/bin
+          ln -sf /usr/bin/m4 output/host/usr/bin/m4
+          
+          # 验证配置
           if [ -f .config ]; then
             echo "✅ Configuration successful"
             grep "^BR2_" .config | grep -v "^#" | head -20
@@ -205,7 +161,8 @@ jobs:
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           echo "Starting toolchain build (this will take 2-3 hours)..."
-          make host-m4 -j2
+          
+          # 直接构建 toolchain，跳过 host-m4
           make toolchain -j2
         env:
           FORCE_UNSAFE_CONFIGURE: 1
