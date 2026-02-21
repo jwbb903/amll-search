@@ -23,6 +23,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
+          # 添加 Python2 的 PPA
+          sudo add-apt-repository ppa:deadsnakes/ppa -y
+          sudo apt-get update
           sudo apt-get install -y \
             build-essential git wget cpio unzip rsync bc \
             libncurses5-dev libncursesw5-dev libssl-dev \
@@ -31,7 +34,8 @@ jobs:
             pkg-config cmake libglib2.0-dev libfdt-dev \
             libpixman-1-dev zlib1g-dev device-tree-compiler \
             locales
-          sudo ln -sf /usr/bin/python2 /usr/bin/python
+          # 确保 python 指向 python2
+          sudo ln -sf /usr/bin/python2 /usr/bin/python || true
 
       - name: Set locale
         run: |
@@ -43,17 +47,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: buildroot-${{ env.BUILDROOT_VERSION }}/dl
-          key: ${{ runner.os }}-buildroot-dl-${{ hashFiles(format('buildroot-{0}/dl/**', env.BUILDROOT_VERSION)) }}
+          key: ${{ runner.os }}-buildroot-dl-${{ env.BUILDROOT_VERSION }}-${{ github.run_id }}
           restore-keys: |
+            ${{ runner.os }}-buildroot-dl-${{ env.BUILDROOT_VERSION }}-
             ${{ runner.os }}-buildroot-dl-
 
       - name: Download Buildroot
         run: |
-          wget -q ${{ env.BUILDROOT_URL }}
-          tar -xf buildroot-${{ env.BUILDROOT_VERSION }}.tar.gz
+          if [ ! -d "buildroot-${{ env.BUILDROOT_VERSION }}" ]; then
+            wget -q ${{ env.BUILDROOT_URL }}
+            tar -xf buildroot-${{ env.BUILDROOT_VERSION }}.tar.gz
+          fi
 
       - name: Copy defconfig
         run: |
+          mkdir -p buildroot-${{ env.BUILDROOT_VERSION }}/configs
           if [ -f "configs/${{ env.DEFCONFIG_NAME }}" ]; then
             cp configs/${{ env.DEFCONFIG_NAME }} buildroot-${{ env.BUILDROOT_VERSION }}/configs/
           else
@@ -89,13 +97,13 @@ jobs:
       - name: Build toolchain and SDK
         working-directory: buildroot-${{ env.BUILDROOT_VERSION }}
         run: |
-          make toolchain -j2
-          make sdk -j2
+          make toolchain -j$(nproc)
+          make sdk -j$(nproc)
 
       - name: Prepare SDK archive
         working-directory: buildroot-${{ env.BUILDROOT_VERSION }}
         run: |
-          SDK_ARCHIVE=$(ls output/images/*sdk*.tar.gz | head -1)
+          SDK_ARCHIVE=$(ls output/images/*sdk*.tar.gz 2>/dev/null | head -1)
           if [ -z "$SDK_ARCHIVE" ]; then
             echo "SDK archive not found!"
             exit 1
@@ -123,6 +131,7 @@ export OBJDUMP="aarch64-linux-objdump"
 export GDB="aarch64-linux-gdb"
 
 echo "DictPen P5 Toolchain Ready!"
+echo "Toolchain path: $PATH"
 aarch64-linux-gcc --version | head -1
 EOF
           chmod +x dictpen-env.sh
