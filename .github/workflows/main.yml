@@ -51,10 +51,7 @@ jobs:
             curl \
             ca-certificates
           
-          # 创建 python 指向 python2 的符号链接
           sudo ln -sf /usr/bin/python2 /usr/bin/python
-          
-          # 设置 locale
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
 
@@ -99,7 +96,6 @@ jobs:
           cd ~/buildroot-work/buildroot-2018.02-rc3
           mkdir -p configs
           
-          # 创建完整的 defconfig 文件
           cat > configs/dictpen_p5_defconfig << 'EOF'
           # Buildroot 2018.02-rc3 for Youdao DictPen P5 (RK3566)
           
@@ -144,19 +140,11 @@ jobs:
       - name: Configure Buildroot
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          
-          # 首先清理任何旧的配置
           rm -f .config
           rm -rf output
-          
-          # 确保基础目录结构存在
           mkdir -p output
-          
-          # 设置默认配置
-          echo "Setting default configuration..."
           make dictpen_p5_defconfig
           
-          # 验证配置是否成功
           if [ -f .config ]; then
             echo "✅ Configuration successful"
             echo "Configuration summary:"
@@ -169,12 +157,6 @@ jobs:
       - name: Build toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          
-          # 显示当前配置
-          echo "Current configuration:"
-          make show-targets
-          
-          # 开始构建 toolchain
           echo "Starting toolchain build..."
           make toolchain -j2
         env:
@@ -184,7 +166,6 @@ jobs:
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 检查 toolchain 是否生成
           if [ ! -d output/host/usr/bin ]; then
             echo "❌ Toolchain not found!"
             exit 1
@@ -198,20 +179,13 @@ jobs:
           echo "=== Checking compiler target ==="
           aarch64-linux-gcc -dumpmachine
           
-          # 创建并编译测试程序
           cat > /tmp/test.c << 'EOF'
           #include <stdio.h>
           #include <stdlib.h>
           
           int main() {
               printf("Hello from DictPen P5!\n");
-              printf("Architecture: %s\n", 
-  #ifdef __aarch64__
-                     "ARM64"
-  #else
-                     "Unknown"
-  #endif
-              );
+              printf("Architecture: ARM64\n");
               return 0;
           }
           EOF
@@ -227,11 +201,8 @@ jobs:
       - name: Create SDK package
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          
-          # 创建 SDK
           make sdk
           
-          # 查找 SDK 包
           SDK_PACKAGE=$(find output/images -name "*sdk*.tar.gz" -type f | head -1)
           if [ -n "$SDK_PACKAGE" ]; then
             echo "SDK package created: $SDK_PACKAGE"
@@ -289,14 +260,10 @@ jobs:
       - name: Package toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          
-          # 创建完整的工具链包
           tar -czf dictpen-p5-toolchain-complete.tar.gz \
               output/host \
               dictpen-env.sh \
-              configs/dictpen_p5_defconfig \
-              README.md \
-              --transform 's|^|dictpen-p5-toolchain/|'
+              configs/dictpen_p5_defconfig
           
           echo "✅ Toolchain packaged: dictpen-p5-toolchain-complete.tar.gz"
           ls -lh *.tar.gz
@@ -320,7 +287,6 @@ jobs:
           path: |
             ~/buildroot-work/buildroot-2018.02-rc3/output/build/**/*.log
             ~/buildroot-work/buildroot-2018.02-rc3/output/build/**/config.log
-            ~/buildroot-work/buildroot-2018.02-rc3/config.log
           retention-days: 7
 
       - name: Display build summary
@@ -340,4 +306,4 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 下载" >> $GITHUB_STEP_SUMMARY
           echo "在 Actions 页面下载以下工件：" >> $GITHUB_STEP_SUMMARY
-          echo "- `dictpen-p5-toolchain` - 完整工具链" >> $GITHUB_STEP_SUMMARY
+          echo "- \`dictpen-p5-toolchain\` - 完整工具链" >> $GITHUB_STEP_SUMMARY
