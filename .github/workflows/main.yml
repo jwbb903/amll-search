@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-toolchain:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04  # 切换到 Ubuntu 20.04 以避免 m4 编译问题
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
             flex \
             bison \
             libelf-dev \
-            python2 \
+            python \
             python3 \
             file \
             gawk \
@@ -51,7 +51,6 @@ jobs:
             curl \
             ca-certificates
           
-          sudo ln -sf /usr/bin/python2 /usr/bin/python
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
 
@@ -123,11 +122,31 @@ jobs:
           BR2_PACKAGE_HOST_MTOOLS=y
           EOF
 
+      - name: Create m4 patch for Ubuntu 20.04 compatibility
+        run: |
+          cd ~/buildroot-work/buildroot-2018.02-rc3
+          mkdir -p package/m4
+          
+          # 创建补丁文件来解决 m4 编译问题
+          cat > package/m4/0001-fix-signal-h-compat.patch << 'EOF'
+          --- a/lib/c-stack.c
+          +++ b/lib/c-stack.c
+          @@ -52,7 +52,7 @@
+           
+          #if HAVE_LIBSIGSEGV
+          # include <sigsegv.h>
+          -#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
+          +#elif defined HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
+           /* libsigsegv 2.6 through 2.8 have a bug where sigsegv_handler fails
+              to install the preallocated stack for the overflow handler.  */
+          # else
+          EOF
+
       - name: Initialize Buildroot and Configure
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 首先创建基本的输出目录结构
+          # 创建基本的输出目录结构
           mkdir -p output/build
           mkdir -p output/host
           mkdir -p output/staging
@@ -136,9 +155,6 @@ jobs:
           
           # 创建空的 .br-external.mk 文件
           touch output/.br-external.mk
-          
-          # 创建基本的配置文件
-          make defconfig
           
           # 现在应用我们的自定义配置
           make dictpen_p5_defconfig
@@ -152,15 +168,6 @@ jobs:
             echo "❌ Configuration failed"
             exit 1
           fi
-
-      - name: Show configuration
-        run: |
-          cd ~/buildroot-work/buildroot-2018.02-rc3
-          echo "=== Buildroot Configuration ==="
-          make show-targets || true
-          echo "=== Architecture Settings ==="
-          grep "BR2_ARCH" .config
-          grep "BR2_cortex" .config
 
       - name: Build toolchain
         run: |
@@ -212,7 +219,7 @@ jobs:
           make sdk || true
           
           # 查找或创建 SDK 包
-          if [ -f output/images/*sdk*.tar.gz ]; then
+          if ls output/images/*sdk*.tar.gz 1> /dev/null 2>&1; then
             cp output/images/*sdk*.tar.gz .
           else
             echo "Creating manual SDK package..."
@@ -236,7 +243,7 @@ jobs:
           if [ -d "$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu/sysroot" ]; then
               export SYSROOT="$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu/sysroot"
           else
-              export SYSROOT="$TOCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu"
+              export SYSROOT="$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu"
           fi
           
           export CC="aarch64-linux-gcc --sysroot=$SYSROOT"
