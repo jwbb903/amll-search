@@ -1,6 +1,6 @@
 name: "Build Youdao DictPen: Build Youdao DictPen P5 Toolchain"
 
-于:
+on:
   # 手动触发
   workflow_dispatch:
   
@@ -10,7 +10,7 @@ name: "Build Youdao DictPen: Build Youdao DictPen P5 Toolchain"
   
   # 推送触发（可选）
   push:
-    分支: [main, master]
+    branches: [main, master]
     paths:
       - '.github/workflows/build-dictpen-toolchain.yml'
       - 'configs/**'
