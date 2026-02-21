@@ -1,6 +1,6 @@
 name: "Build Youdao DictPen: Build Youdao DictPen P5 Toolchain"
 
-on:
+于:
   # 手动触发
   workflow_dispatch:
   
@@ -10,7 +10,7 @@ on:
   
   # 推送触发（可选）
   push:
-    branches: [main, master]
+    分支: [main, master]
     paths:
       - '.github/workflows/build-dictpen-toolchain.yml'
       - 'configs/**'
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   build-toolchain:
-    runs-on: ubuntu-20.04  # 使用 Ubuntu 20.04 匹配旧版 Buildroot
+    runs-on: ubuntu-22.04  # 使用 Ubuntu 20.04 匹配旧版 Buildroot
     
     timeout-minutes: 360  # 6小时超时
     
