@@ -1,35 +1,24 @@
-name: "Build Youdao DictPen: Build Youdao DictPen P5 Toolchain"
+name: Build DictPen P5 Toolchain
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * 0'
   push:
-    branches: [main, master]
-    paths:
-      - '.github/workflows/build-dictpen-toolchain.yml'
-      - 'configs/**'
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
-permissions:
-  contents: write
-  packages: write
+env:
+  BUILDROOT_VERSION: 2018.02-rc3
+  BUILDROOT_URL: https://buildroot.org/downloads/buildroot-2018.02-rc3.tar.gz
+  DEFCONFIG_NAME: dictpen_p5_defconfig
 
 jobs:
-  build-toolchain:
-    runs-on: ubuntu-22.04
-    
-    timeout-minutes: 360
-    
-    env:
-      BR_VERSION: "2018.02-rc3"
-      BR_URL: "https://buildroot.org/downloads/buildroot-2018.02-rc3.tar.gz"
-      TOOLCHAIN_NAME: "dictpen-p5-toolchain"
-      
+  build:
+    runs-on: ubuntu-22.04   # 更新为 22.04
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
       - name: Install dependencies
         run: |
@@ -48,8 +37,8 @@ jobs:
             flex \
             bison \
             libelf-dev \
-            python2 \
-            python2-minimal \
+            python2 \                # Ubuntu 22.04 仍有 python2 包
+            python3 \
             file \
             gawk \
             texinfo \
@@ -65,154 +54,111 @@ jobs:
             zlib1g-dev \
             device-tree-compiler \
             locales
-
-          # 手动创建 python 软链接
+          # 创建 python 指向 python2 的符号链接（Buildroot 2018 可能依赖）
           sudo ln -sf /usr/bin/python2 /usr/bin/python
-          python --version
 
+      - name: Set locale
+        run: |
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
 
-      - name: Cache downloads
-        uses: actions/cache@v3
+      - name: Cache downloaded sources
+        id: cache-dl
+        uses: actions/cache@v4
         with:
-          path: ~/buildroot/dl
-          key: buildroot-dl-${{ env.BR_VERSION }}-${{ hashFiles('.github/workflows/build-dictpen-toolchain.yml') }}
+          path: buildroot-${BUILDROOT_VERSION}/dl
+          key: ${{ runner.os }}-buildroot-dl-${{ hashFiles('buildroot-${BUILDROOT_VERSION}/dl/**') }}
           restore-keys: |
-            buildroot-dl-${{ env.BR_VERSION }}-
+            ${{ runner.os }}-buildroot-dl-
 
       - name: Download Buildroot
         run: |
-          mkdir -p ~/buildroot
-          cd ~/buildroot
-          
-          if [ ! -f "buildroot-${BR_VERSION}.tar.gz" ]; then
-            echo "Downloading Buildroot ${BR_VERSION}..."
-            wget -q --show-progress "${BR_URL}"
+          wget -q ${BUILDROOT_URL}
+          tar -xf buildroot-${BUILDROOT_VERSION}.tar.gz
+
+      - name: Copy defconfig
+        run: |
+          if [ -f "configs/${DEFCONFIG_NAME}" ]; then
+            cp configs/${DEFCONFIG_NAME} buildroot-${BUILDROOT_VERSION}/configs/
+          else
+            # 默认 defconfig 内容（根据您的教程）
+            cat > buildroot-${BUILDROOT_VERSION}/configs/${DEFCONFIG_NAME} << 'EOF'
+BR2_aarch64=y
+BR2_cortex_a55=y
+BR2_ARM_FPU_VFPV4=y
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_GCC_VERSION_7_X=y
+BR2_BINUTILS_VERSION_2_29_X=y
+BR2_KERNEL_HEADERS_4_19=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_INSTALL_LIBSTDCPP=y
+BR2_TOOLCHAIN_HAS_SSP=y
+BR2_TOOLCHAIN_HAS_NATIVE_RPC=y
+BR2_USE_MMU=y
+BR2_TARGET_OPTIMIZATION="-pipe -O2"
+BR2_TARGET_GENERIC_GETTY=y
+BR2_TARGET_GENERIC_GETTY_PORT="ttyFIQ0"
+BR2_TARGET_GENERIC_HOSTNAME="buildroot"
+BR2_TARGET_GENERIC_ISSUE="Welcome to Buildroot"
+BR2_SYSTEM_BIN_SH_BUSYBOX=y
+BR2_SDK=y
+BR2_PACKAGE_HOST_GDB=y
+EOF
           fi
-          
-          tar -xzf "buildroot-${BR_VERSION}.tar.gz"
-          echo "Buildroot location: $(pwd)/buildroot-${BR_VERSION}"
 
-      - name: Create and load config
+      - name: Configure Buildroot
+        working-directory: buildroot-${BUILDROOT_VERSION}
         run: |
-          cd ~/buildroot/buildroot-${BR_VERSION}
-          
-          # 清理
-          make clean 2>/dev/null || true
-          rm -rf output
-          mkdir -p output
-          touch output/.br-external.mk
-          
-          # 直接创建 .config 文件
-          cat > .config << 'EOF'
-          BR2_aarch64=y
-          BR2_cortex_a55=y
-          BR2_ARM_FPU_VFPV4=y
-          BR2_TOOLCHAIN_BUILDROOT=y
-          BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
-          BR2_GCC_VERSION_7_X=y
-          BR2_BINUTILS_VERSION_2_29_X=y
-          BR2_KERNEL_HEADERS_4_19=y
-          BR2_TOOLCHAIN_BUILDROOT_CXX=y
-          BR2_INSTALL_LIBSTDCPP=y
-          BR2_TOOLCHAIN_HAS_SSP=y
-          BR2_TOOLCHAIN_HAS_NATIVE_RPC=y
-          BR2_USE_MMU=y
-          BR2_TARGET_OPTIMIZATION="-pipe -O2"
-          BR2_TARGET_GENERIC_GETTY=y
-          BR2_TARGET_GENERIC_GETTY_PORT="ttyFIQ0"
-          BR2_TARGET_GENERIC_HOSTNAME="buildroot"
-          BR2_TARGET_GENERIC_ISSUE="Welcome to Buildroot"
-          BR2_SYSTEM_BIN_SH_BUSYBOX=y
-          BR2_SDK=y
-          BR2_PACKAGE_HOST_GDB=y
-          EOF
-          
-          # 使用 yes 命令自动回答所有提示，或直接使用 defconfig
-          yes "" | make oldconfig 2>/dev/null || make defconfig
-          
-          echo "Configuration loaded:"
-          head -50 .config
+          make ${DEFCONFIG_NAME}
 
-      - name: Build toolchain
+      - name: Build toolchain and SDK
+        working-directory: buildroot-${BUILDROOT_VERSION}
         run: |
-          cd ~/buildroot/buildroot-${BR_VERSION}
-          
-          echo "Starting toolchain build at $(date)"
-          make toolchain -j$(nproc) 2>&1 | tee build.log
-          echo "Finished at $(date)"
-          
-          ls -la output/host/usr/bin/ | head -20
+          # GitHub 托管运行器为 2 核，使用 -j2 避免内存不足
+          make toolchain -j2
+          make sdk -j2
 
-      - name: Verify toolchain
+      - name: Prepare SDK archive
+        working-directory: buildroot-${BUILDROOT_VERSION}
         run: |
-          cd ~/buildroot/buildroot-${BR_VERSION}
-          export PATH="$(pwd)/output/host/usr/bin:$PATH"
-          
-          echo "=== GCC Version ==="
-          aarch64-linux-gcc --version
-          
-          echo ""
-          echo "=== Testing Compilation ==="
-          cat > /tmp/test.c << 'EOF'
-          #include <stdio.h>
-          int main() {
-              printf("Hello from GitHub Actions!\n");
-              return 0;
-          }
-          EOF
-          
-          aarch64-linux-gcc -o /tmp/test-arm64 /tmp/test.c
-          file /tmp/test-arm64
-
-      - name: Create SDK package
-        run: |
-          cd ~/buildroot/buildroot-${BR_VERSION}
-          
-          echo "Creating SDK package..."
-          make sdk-all 2>/dev/null || make sdk 2>/dev/null || echo "SDK target not available"
-          
-          # 打包工具链
-          tar -czf ${TOOLCHAIN_NAME}-full.tar.gz \
-            -C output/host/usr \
-            bin/ \
-            aarch64-buildroot-linux-gnu/
-          
-          ls -lh ${TOOLCHAIN_NAME}-full.tar.gz
+          SDK_ARCHIVE=$(ls output/images/*sdk*.tar.gz | head -1)
+          if [ -z "$SDK_ARCHIVE" ]; then
+            echo "SDK archive not found!"
+            exit 1
+          fi
+          cp $SDK_ARCHIVE ../dictpen-p5-sdk.tar.gz
 
       - name: Create environment script
         run: |
-          cd ~/buildroot/buildroot-${BR_VERSION}
-          
-          cat > ${TOOLCHAIN_NAME}-setup-env.sh << 'EOF'
-          #!/bin/bash
-          TOOLCHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
-          export CROSS_COMPILE="aarch64-linux-"
-          export ARCH="arm64"
-          export SYSROOT="$TOOLCHAIN_DIR/aarch64-buildroot-linux-gnu/sysroot"
-          export CC="aarch64-linux-gcc --sysroot=$SYSROOT"
-          export CXX="aarch64-linux-g++ --sysroot=$SYSROOT"
-          echo "Toolchain activated: $(aarch64-linux-gcc --version | head -1)"
-          EOF
-          
-          chmod +x ${TOOLCHAIN_NAME}-setup-env.sh
+          cat > dictpen-env.sh << 'EOF'
+#!/bin/bash
+export PATH="$PWD/buildroot-${BUILDROOT_VERSION}/output/host/usr/bin:$PATH"
+export CROSS_COMPILE="aarch64-linux-"
+export ARCH="arm64"
+export SYSROOT="$PWD/buildroot-${BUILDROOT_VERSION}/output/host/usr/aarch64-buildroot-linux-gnu/sysroot"
+export CC="aarch64-linux-gcc --sysroot=\$SYSROOT"
+export CXX="aarch64-linux-g++ --sysroot=\$SYSROOT"
+export LD="aarch64-linux-ld --sysroot=\$SYSROOT"
+export AR="aarch64-linux-ar"
+export AS="aarch64-linux-as"
+export NM="aarch64-linux-nm"
+export STRIP="aarch64-linux-strip"
+export RANLIB="aarch64-linux-ranlib"
+export OBJCOPY="aarch64-linux-objcopy"
+export OBJDUMP="aarch64-linux-objdump"
+export GDB="aarch64-linux-gdb"
 
-      - name: Upload artifacts
+echo "DictPen P5 Toolchain Ready!"
+aarch64-linux-gcc --version | head -1
+EOF
+          chmod +x dictpen-env.sh
+
+      - name: Upload SDK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.TOOLCHAIN_NAME }}
+          name: dictpen-p5-sdk
           path: |
-            ~/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-full.tar.gz
-            ~/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-setup-env.sh
-          retention-days: 30
-          compression-level: 0
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: ~/buildroot/buildroot-*/build.log
-          retention-days: 7
+            dictpen-p5-sdk.tar.gz
+            dictpen-env.sh
+          if-no-files-found: error
