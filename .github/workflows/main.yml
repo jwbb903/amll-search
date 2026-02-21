@@ -102,8 +102,6 @@ jobs:
           make clean 2>/dev/null || true
           rm -rf output
           mkdir -p output
-          
-          # 关键：创建 Buildroot 需要的空文件
           touch output/.br-external.mk
           
           # 直接创建 .config 文件
@@ -131,11 +129,11 @@ jobs:
           BR2_PACKAGE_HOST_GDB=y
           EOF
           
-          # 现在运行 oldconfig
-          make oldconfig
+          # 使用 yes 命令自动回答所有提示，或直接使用 defconfig
+          yes "" | make oldconfig 2>/dev/null || make defconfig
           
           echo "Configuration loaded:"
-          grep -E "^(BR2_|# BR2_)" .config | head -50
+          head -50 .config
 
       - name: Build toolchain
         run: |
