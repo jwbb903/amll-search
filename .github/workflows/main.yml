@@ -123,11 +123,12 @@ jobs:
           BR2_PACKAGE_HOST_MTOOLS=y
           EOF
 
-      - name: Clean any existing m4 patches
+      - name: Clean any existing m4 patches and build
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           rm -rf package/m4/*.patch
           rm -rf output/build/host-m4-*
+          rm -rf dl/m4-1.4.18.tar.xz
 
       - name: Create m4 patch for Ubuntu 22.04
         run: |
@@ -135,9 +136,8 @@ jobs:
           mkdir -p package/m4
           
           cat > package/m4/0001-fix-c-stack-ubuntu22.patch << 'EOF'
-          diff -urN a/lib/c-stack.c b/lib/c-stack.c
-          --- a/lib/c-stack.c     2016-12-31 10:27:48.000000000 +0000
-          +++ b/lib/c-stack.c     2026-02-22 00:00:00.000000000 +0000
+          --- a/lib/c-stack.c
+          +++ b/lib/c-stack.c
           @@ -16,16 +16,17 @@
               along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
            
@@ -165,7 +165,7 @@ jobs:
            
           -#if HAVE_LIBSIGSEGV
           -# include <sigsegv.h>
-          -#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
+          -#elif defined HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
           -/* libsigsegv 2.6 through 2.8 have a bug where sigsegv_handler fails
           -   to install the preallocated stack for the overflow handler.  */
           -# else

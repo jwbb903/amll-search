@@ -51,9 +51,7 @@ jobs:
             curl \
             ca-certificates
           
-          # 创建 python 指向 python2 的符号链接
           sudo ln -sf /usr/bin/python2 /usr/bin/python
-          
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
 
@@ -125,15 +123,21 @@ jobs:
           BR2_PACKAGE_HOST_MTOOLS=y
           EOF
 
-      - name: Create comprehensive m4 patch for Ubuntu 22.04
+      - name: Clean any existing m4 patches
+        run: |
+          cd ~/buildroot-work/buildroot-2018.02-rc3
+          rm -rf package/m4/*.patch
+          rm -rf output/build/host-m4-*
+
+      - name: Create m4 patch for Ubuntu 22.04
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           mkdir -p package/m4
           
-          # 创建完整的补丁文件来解决 Ubuntu 22.04 上的 m4 编译问题
-          cat > package/m4/0001-fix-c-stack-for-modern-systems.patch << 'EOF'
-          --- a/lib/c-stack.c
-          +++ b/lib/c-stack.c
+          cat > package/m4/0001-fix-c-stack-ubuntu22.patch << 'EOF'
+          diff -urN a/lib/c-stack.c b/lib/c-stack.c
+          --- a/lib/c-stack.c     2016-12-31 10:27:48.000000000 +0000
+          +++ b/lib/c-stack.c     2026-02-22 00:00:00.000000000 +0000
           @@ -16,16 +16,17 @@
               along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
            
@@ -155,7 +159,7 @@ jobs:
            #if HAVE_SETRLIMIT
            /* FIXME: This use of HAVE_SETRLIMIT is wrong, as it checks for the
               function, not the symbol.  But glibc defines setrlimit unconditionally,
-          @@ -49,15 +50,9 @@
+          @@ -49,15 +50,7 @@
            #endif
            #endif
            
@@ -165,9 +169,10 @@ jobs:
           -/* libsigsegv 2.6 through 2.8 have a bug where sigsegv_handler fails
           -   to install the preallocated stack for the overflow handler.  */
           -# else
-           # define LIBSIGSEGV_PREALLOC_STACK 1
-           # include <sigsegv.h>
+          -# define LIBSIGSEGV_PREALLOC_STACK 1
+          -# include <sigsegv.h>
           -#endif
+          +#include <sigsegv.h>
            
            #if HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_T
            # include <ucontext.h>
@@ -177,26 +182,19 @@ jobs:
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 创建基本的输出目录结构
           mkdir -p output/build
           mkdir -p output/host
           mkdir -p output/staging
           mkdir -p output/target
           mkdir -p output/images
           
-          # 创建空的 .br-external.mk 文件
           touch output/.br-external.mk
           
-          # 先运行默认配置初始化
           make defconfig
-          
-          # 然后应用我们的自定义配置
           make dictpen_p5_defconfig
           
-          # 验证配置
           if [ -f .config ]; then
             echo "✅ Configuration successful"
-            echo "Configuration summary:"
             grep "^BR2_" .config | grep -v "^#" | head -20
           else
             echo "❌ Configuration failed"
@@ -207,11 +205,7 @@ jobs:
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           echo "Starting toolchain build (this will take 2-3 hours)..."
-          
-          # 先尝试单独构建 m4 以确保补丁生效
-          make host-m4 -j2 || true
-          
-          # 然后构建完整的 toolchain
+          make host-m4 -j2
           make toolchain -j2
         env:
           FORCE_UNSAFE_CONFIGURE: 1
@@ -233,7 +227,6 @@ jobs:
           echo "=== Checking compiler target ==="
           aarch64-linux-gcc -dumpmachine
           
-          # 创建测试程序
           cat > /tmp/test.c << 'EOF'
           #include <stdio.h>
           int main() {
@@ -242,26 +235,18 @@ jobs:
           }
           EOF
           
-          echo "=== Compiling test program ==="
           aarch64-linux-gcc -o /tmp/test-arm64 /tmp/test.c
-          
-          echo "=== Test program info ==="
           file /tmp/test-arm64
-          
           echo "✅ Toolchain verification passed!"
 
       - name: Create SDK package
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          
-          # 创建 SDK
           make sdk || true
           
-          # 查找或创建 SDK 包
           if ls output/images/*sdk*.tar.gz 1> /dev/null 2>&1; then
             cp output/images/*sdk*.tar.gz .
           else
-            echo "Creating manual SDK package..."
             tar -czf aarch64-buildroot-linux-gnu_sdk.tar.gz -C output/host .
           fi
 
@@ -271,8 +256,6 @@ jobs:
           
           cat > dictpen-env.sh << 'EOF'
           #!/bin/bash
-          # DictPen P5 Toolchain environment script
-          
           TOOLCHAIN_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
           
           export PATH="$TOOLCHAIN_DIR/output/host/usr/bin:$PATH"
@@ -290,11 +273,8 @@ jobs:
           
           echo "========================================="
           echo "DictPen P5 Toolchain Ready!"
-          echo "========================================="
           echo "GCC: $(aarch64-linux-gcc --version | head -1)"
-          echo ""
-          echo "Example:"
-          echo "  \$CC -o hello hello.c"
+          echo "Example: \$CC -o hello hello.c"
           echo "========================================="
           EOF
           
@@ -303,8 +283,6 @@ jobs:
       - name: Package toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
-          
-          # 创建完整的工具链包
           tar -czf dictpen-p5-toolchain-complete.tar.gz \
               output/host \
               dictpen-env.sh \
