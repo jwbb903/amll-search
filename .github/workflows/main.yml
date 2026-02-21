@@ -98,10 +98,13 @@ jobs:
         run: |
           cd ~/buildroot/buildroot-${BR_VERSION}
           
-          # 清理并创建输出目录
+          # 清理
           make clean 2>/dev/null || true
           rm -rf output
           mkdir -p output
+          
+          # 关键：创建 Buildroot 需要的空文件
+          touch output/.br-external.mk
           
           # 直接创建 .config 文件
           cat > .config << 'EOF'
@@ -128,7 +131,7 @@ jobs:
           BR2_PACKAGE_HOST_GDB=y
           EOF
           
-          # 验证并扩展配置
+          # 现在运行 oldconfig
           make oldconfig
           
           echo "Configuration loaded:"
