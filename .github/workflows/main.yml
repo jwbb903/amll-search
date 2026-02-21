@@ -62,7 +62,6 @@ jobs:
             libelf-dev \
             python2 \
             python2-minimal \
-            python-is-python2 \
             file \
             gawk \
             texinfo \
@@ -79,12 +78,15 @@ jobs:
             device-tree-compiler \
             locales
 
+          # 手动创建 python 软链接指向 python2
+          sudo ln -sf /usr/bin/python2 /usr/bin/python
+          
+          # 验证
+          python --version
+
           # 设置 locale（Buildroot 需要）
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
-          
-          # 验证 python 命令指向 python2
-          python --version
 
       # ==========================================
       # 步骤 3: 缓存下载文件（加速重建）
