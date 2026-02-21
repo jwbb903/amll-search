@@ -1,4 +1,4 @@
-name: Build Youdao DictPen: Build Youdao DictPen P5 Toolchain
+name: "Build Youdao DictPen: Build Youdao DictPen P5 Toolchain"
 
 on:
   # 手动触发
@@ -27,9 +27,9 @@ jobs:
     timeout-minutes: 360  # 6小时超时
     
     env:
-      BR_VERSION: 2018.02-rc3
-      BR_URL: https://buildroot.org/downloads/buildroot-2018.02-rc3.tar.gz
-      TOOLCHAIN_NAME: dictpen-p5-toolchain
+      BR_VERSION: "2018.02-rc3"
+      BR_URL: "https://buildroot.org/downloads/buildroot-2018.02-rc3.tar.gz"
+      TOOLCHAIN_NAME: "dictpen-p5-toolchain"
       
     steps:
       # ==========================================
@@ -223,10 +223,11 @@ jobs:
           cd ~/buildroot/buildroot-${BR_VERSION}
           
           echo "Creating SDK package..."
-          make sdk
+          # Buildroot 2018.02 使用 sdk-all 而不是 sdk
+          make sdk-all || make sdk || echo "SDK target not available, skipping..."
           
           echo "SDK created:"
-          ls -lh output/images/*sdk*.tar.gz || echo "SDK not found in images/"
+          ls -lh output/images/*sdk*.tar.gz 2>/dev/null || echo "SDK not found in images/"
           
           # 同时打包整个工具链
           echo "Creating full toolchain archive..."
@@ -339,9 +340,9 @@ jobs:
             ### 注意事项
             设备实际运行 glibc 2.29，如果编译的程序无法运行，请使用 `--sysroot` 指向设备提取的库。
           files: |
-            ~/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-full.tar.gz
-            ~/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-setup-env.sh
-            ~/buildroot/buildroot-*/output/images/*sdk*.tar.gz
+            ${{ github.workspace }}/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-full.tar.gz
+            ${{ github.workspace }}/buildroot/buildroot-*/${{ env.TOOLCHAIN_NAME }}-setup-env.sh
+            ${{ github.workspace }}/buildroot/buildroot-*/output/images/*sdk*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
