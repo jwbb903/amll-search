@@ -1,4 +1,4 @@
-name: Build GCC 9.3 + glibc 2.29 Toolchain for DictPen P5 (with link check)
+name: Build GCC 9.3 + glibc 2.29 Toolchain for DictPen P5 (with link check, ignore runtime)
 
 on:
   push:
@@ -301,17 +301,21 @@ jobs:
           chmod +x dictpen-gcc9-env.sh
           echo "✅ Environment script created"
 
-      # ===== 快速打包（不解引用符号链接，先检查符号链接有效性，显示总大小，带进度条）=====
+      # ===== 快速打包（不解引用符号链接，先检查符号链接有效性（忽略运行时路径），显示总大小，带进度条）=====
       - name: Install pv for progress bar
         run: sudo apt-get install -y pv
 
-      - name: Check symbolic links before packaging
+      - name: Check symbolic links before packaging (ignore runtime paths)
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02/output/host
-          echo "🔍 Checking symbolic links in host directory..."
+          echo "🔍 Checking symbolic links in host directory (ignoring /proc, /sys, /dev, /tmp)..."
           broken=0
           while IFS= read -r link; do
             target=$(readlink "$link")
+            # 如果目标以 /proc/ /sys/ /dev/ /tmp/ 开头，则跳过检查（运行时虚拟文件系统）
+            if [[ "$target" == /proc/* || "$target" == /sys/* || "$target" == /dev/* || "$target" == /tmp/* ]]; then
+              continue
+            fi
             # 如果目标不是绝对路径，则拼接目录
             if [[ "$target" != /* ]]; then
               target_dir=$(dirname "$link")/$target
@@ -328,7 +332,7 @@ jobs:
             echo "❌ Found $broken broken symbolic links. Packaging aborted."
             exit 1
           else
-            echo "✅ All symbolic links are valid."
+            echo "✅ All relevant symbolic links are valid."
           fi
 
       - name: Package toolchain FAST (no dereference, show total size, with progress bar)
