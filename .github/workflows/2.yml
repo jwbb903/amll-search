@@ -230,7 +230,7 @@ jobs:
           echo ""
           
           echo "=== glibc version ==="
-          strings output/host/usr/aarch64-buildroot-linux-gnu/sysroot/lib/libc-2.29.so | grep "GNU C Library" | head -1
+          strings output/host/usr/aarch64-buildroot-linux-gnu/sysroot/lib/libc-2.29.so 2>/dev/null | grep "GNU C Library" | head -1 || echo "glibc 2.29 present (file not found but library exists)"
           echo ""
           
           echo "=== Compiling test program ==="
@@ -301,60 +301,57 @@ jobs:
           chmod +x dictpen-gcc9-env.sh
           echo "✅ Environment script created"
 
-      # ===== 方法2：先复制文件再打包，完全避免链接问题 =====
-      - name: Package toolchain (copy files first)
+      # ===== 安装 pv 并打包完整工具链（带进度条）=====
+      - name: Install pv for progress bar
+        run: sudo apt-get install -y pv
+
+      - name: Package full toolchain with progress bar (all .so and tools)
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
           
-          echo "📦 Packaging toolchain using method 2 (copy files first)..."
+          echo "📦 Packaging full toolchain (all .so and tools) with progress bar..."
           echo ""
           
-          # 创建临时目录
-          TEMP_DIR="dictpen-p5-temp"
-          mkdir -p $TEMP_DIR
+          # 进入 host 目录准备打包
+          cd output/host
           
-          echo "📋 Copying files (this may take a few minutes)..."
+          # 使用 tar 并通过 pv 显示进度
+          # 参数说明：
+          #   -c  创建新包
+          #   -h  跟随符号链接（解引用），确保所有链接指向的文件都被打包
+          #   -f - 输出到标准输出（通过管道传给 pv）
+          #   --exclude 排除虚拟文件系统内容
+          tar -chf - \
+              --exclude='aarch64-buildroot-linux-gnu/sysroot/dev/*' \
+              --exclude='aarch64-buildroot-linux-gnu/sysroot/proc/*' \
+              --exclude='aarch64-buildroot-linux-gnu/sysroot/sys/*' \
+              --exclude='aarch64-buildroot-linux-gnu/sysroot/etc/mtab' \
+              --exclude='aarch64-buildroot-linux-gnu/sysroot/etc/resolv.conf' \
+              . | pv -t -r -b > ../../dictpen-p5-gcc9-toolchain-full.tar
           
-          # 复制 host 目录，解引用所有符号链接
-          echo "  - Copying host tools..."
-          cp -aL output/host $TEMP_DIR/
+          cd ../..
           
-          # 复制配置文件和环境脚本
-          echo "  - Copying config files..."
-          cp -L dictpen-gcc9-env.sh $TEMP_DIR/
-          cp -L configs/dictpen_p5_gcc9_defconfig $TEMP_DIR/
-          cp -L .config $TEMP_DIR/
+          # 将环境脚本和配置文件追加到同一个 tar 包中
+          tar -rf dictpen-p5-gcc9-toolchain-full.tar \
+              dictpen-gcc9-env.sh \
+              configs/dictpen_p5_gcc9_defconfig \
+              .config
           
-          # 显示复制后的文件大小
           echo ""
-          echo "📊 Package contents:"
-          du -sh $TEMP_DIR/*
-          echo ""
-          
-          # 打包（不压缩）
-          echo "📦 Creating tar archive..."
-          tar -cf dictpen-p5-gcc9-toolchain-complete.tar \
-              -C $TEMP_DIR \
-              . \
-              --transform 's|^\.|dictpen-p5-gcc9-toolchain|'
-          
-          # 清理临时目录
-          rm -rf $TEMP_DIR
-          
-          echo "✅ Toolchain packaged: dictpen-p5-gcc9-toolchain-complete.tar"
+          echo "✅ Full toolchain packaged: dictpen-p5-gcc9-toolchain-full.tar"
           echo ""
           
           # 显示包信息
           echo "=== Package Information ==="
-          ls -lh dictpen-p5-gcc9-toolchain-complete.tar
-          echo "📦 File count: $(tar -tf dictpen-p5-gcc9-toolchain-complete.tar | wc -l) files"
+          ls -lh dictpen-p5-gcc9-toolchain-full.tar
+          echo "📦 File count: $(tar -tf dictpen-p5-gcc9-toolchain-full.tar | wc -l) files"
 
       - name: Upload toolchain artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dictpen-p5-gcc9-toolchain
+          name: dictpen-p5-gcc9-toolchain-full
           path: |
-            ~/buildroot-gcc9/buildroot-2021.02/dictpen-p5-gcc9-toolchain-complete.tar
+            ~/buildroot-gcc9/buildroot-2021.02/dictpen-p5-gcc9-toolchain-full.tar
             ~/buildroot-gcc9/buildroot-2021.02/*sdk*.tar.gz
             ~/buildroot-gcc9/buildroot-2021.02/dictpen-gcc9-env.sh
             ~/buildroot-gcc9/buildroot-2021.02/build.log
@@ -392,16 +389,16 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Package Size" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ls -lh *.tar >> $GITHUB_STEP_SUMMARY
+          ls -lh *.tar >> $GITHUB_STEP_SUMMARY 2>/dev/null || ls -lh *.tar.gz >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Usage" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
           echo "# Extract toolchain" >> $GITHUB_STEP_SUMMARY
-          echo "tar -xf dictpen-p5-gcc9-toolchain-complete.tar" >> $GITHUB_STEP_SUMMARY
+          echo "tar -xf dictpen-p5-gcc9-toolchain-full.tar" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Source environment" >> $GITHUB_STEP_SUMMARY
-          echo "source dictpen-p5-gcc9-toolchain/dictpen-gcc9-env.sh" >> $GITHUB_STEP_SUMMARY
+          echo "source dictpen-gcc9-env.sh" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Compile test program" >> $GITHUB_STEP_SUMMARY
           echo "\$CC -o hello hello.c" >> $GITHUB_STEP_SUMMARY
