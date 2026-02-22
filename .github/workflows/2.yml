@@ -1,0 +1,322 @@
+name: Build GCC 9.3 + glibc 2.29 Toolchain for DictPen P5
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-toolchain:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            wget \
+            cpio \
+            unzip \
+            rsync \
+            bc \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libssl-dev \
+            flex \
+            bison \
+            libelf-dev \
+            python3 \
+            python3-distutils \
+            file \
+            gawk \
+            texinfo \
+            help2man \
+            libtool-bin \
+            autoconf \
+            automake \
+            pkg-config \
+            cmake \
+            libglib2.0-dev \
+            libfdt-dev \
+            libpixman-1-dev \
+            zlib1g-dev \
+            device-tree-compiler \
+            locales
+          
+          sudo locale-gen en_US.UTF-8
+          sudo update-locale LANG=en_US.UTF-8
+
+      - name: Set up environment
+        run: |
+          echo "LANG=en_US.UTF-8" >> $GITHUB_ENV
+          echo "LC_ALL=en_US.UTF-8" >> $GITHUB_ENV
+
+      - name: Cache Buildroot downloads
+        id: cache-dl
+        uses: actions/cache@v4
+        with:
+          path: ~/buildroot-gcc9/buildroot-2021.02/dl
+          key: ${{ runner.os }}-buildroot-2021.02-dl-${{ hashFiles('~/buildroot-gcc9/buildroot-2021.02/configs/dictpen_p5_gcc9_defconfig') }}
+          restore-keys: |
+            ${{ runner.os }}-buildroot-2021.02-dl-
+            ${{ runner.os }}-buildroot-dl-
+
+      - name: Cache Buildroot host tools
+        id: cache-host
+        uses: actions/cache@v4
+        with:
+          path: ~/buildroot-gcc9/buildroot-2021.02/output/host
+          key: ${{ runner.os }}-buildroot-2021.02-host-${{ hashFiles('~/buildroot-gcc9/buildroot-2021.02/configs/dictpen_p5_gcc9_defconfig') }}
+          restore-keys: |
+            ${{ runner.os }}-buildroot-2021.02-host-
+            ${{ runner.os }}-buildroot-host-
+
+      - name: Download Buildroot 2021.02
+        run: |
+          mkdir -p ~/buildroot-gcc9
+          cd ~/buildroot-gcc9
+          if [ ! -f buildroot-2021.02.tar.gz ]; then
+            wget -q https://buildroot.org/downloads/buildroot-2021.02.tar.gz
+          fi
+          # 确保源码完整（若目录缺失或Makefile不存在则重新解压）
+          if [ ! -d buildroot-2021.02 ] || [ ! -f buildroot-2021.02/Makefile ]; then
+            echo "Extracting Buildroot source..."
+            rm -rf buildroot-2021.02
+            tar -xzf buildroot-2021.02.tar.gz
+          fi
+          ls -la buildroot-2021.02/
+
+      - name: Verify Buildroot source
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          if [ ! -f Makefile ]; then
+            echo "❌ Buildroot Makefile not found!"
+            exit 1
+          fi
+          echo "✅ Buildroot source verified."
+
+      - name: Create defconfig file
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          mkdir -p configs
+          
+          cat > configs/dictpen_p5_gcc9_defconfig << 'EOF'
+          # ============================================
+          # Buildroot 2021.02 - 有道词典笔 P5 精确配置
+          # GCC 9.3 + glibc 2.29 + Linux 4.19
+          # 完全匹配设备
+          # ============================================
+          
+          # 目标架构
+          BR2_aarch64=y
+          BR2_cortex_a55=y
+          BR2_ARM_FPU_VFPV4=y
+          
+          # ============================================
+          # 工具链配置
+          # ============================================
+          BR2_TOOLCHAIN_BUILDROOT=y
+          BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+          BR2_GCC_VERSION_9_X=y
+          BR2_GLIBC_VERSION_2_29=y
+          BR2_KERNEL_HEADERS_4_19=y
+          
+          # ============================================
+          # 工具链选项
+          # ============================================
+          BR2_TOOLCHAIN_BUILDROOT_CXX=y
+          BR2_INSTALL_LIBSTDCPP=y
+          BR2_TOOLCHAIN_HAS_SSP=y
+          BR2_TOOLCHAIN_HAS_NATIVE_RPC=y
+          BR2_USE_MMU=y
+          
+          # ============================================
+          # 系统配置
+          # ============================================
+          BR2_TARGET_OPTIMIZATION="-pipe -O2"
+          BR2_TARGET_GENERIC_HOSTNAME="buildroot"
+          BR2_TARGET_GENERIC_ISSUE="Welcome to Buildroot"
+          BR2_SYSTEM_BIN_SH_BUSYBOX=y
+          BR2_TARGET_GENERIC_GETTY=y
+          BR2_TARGET_GENERIC_GETTY_PORT="ttyFIQ0"
+          
+          # ============================================
+          # SDK 生成
+          # ============================================
+          BR2_SDK=y
+          BR2_PACKAGE_HOST_GDB=y
+          EOF
+
+      - name: Initialize Buildroot and apply configuration
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          
+          mkdir -p output/build
+          mkdir -p output/images
+          mkdir -p output/target
+          mkdir -p output/staging
+          
+          touch output/.br-external.mk
+          
+          # 基础配置
+          make defconfig
+          make dictpen_p5_gcc9_defconfig
+          
+          # 验证关键配置
+          if [ -f .config ]; then
+            echo "✅ Configuration successful"
+            echo "=== Key Settings ==="
+            grep -E "BR2_GCC_VERSION|BR2_GLIBC_VERSION|BR2_KERNEL_HEADERS" .config
+          else
+            echo "❌ Configuration failed"
+            exit 1
+          fi
+
+      - name: Build toolchain
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          echo "Starting toolchain build (this will take 2-5 hours)..."
+          
+          echo "=== Build Targets ==="
+          make show-targets || true
+          
+          # 构建 toolchain
+          make toolchain -j2
+        env:
+          FORCE_UNSAFE_CONFIGURE: 1
+
+      - name: Verify toolchain
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          
+          if [ ! -d output/host/usr/bin ]; then
+            echo "❌ Toolchain not found!"
+            exit 1
+          fi
+          
+          export PATH="$PWD/output/host/usr/bin:$PATH"
+          
+          echo "=== Toolchain version ==="
+          aarch64-linux-gcc --version
+          
+          echo "=== Checking compiler target ==="
+          aarch64-linux-gcc -dumpmachine
+          
+          # 检查 glibc 版本
+          echo "=== glibc version ==="
+          strings output/host/usr/aarch64-buildroot-linux-gnu/sysroot/lib/libc-2.29.so | grep "GNU C Library" | head -1
+          
+          # 编译测试程序
+          cat > /tmp/test.c << 'EOF'
+          #include <stdio.h>
+          int main() {
+              printf("Hello from DictPen P5 (GCC 9.3 / glibc 2.29)!\n");
+              return 0;
+          }
+          EOF
+          
+          echo "=== Compiling test program ==="
+          aarch64-linux-gcc -o /tmp/test-arm64 /tmp/test.c
+          
+          echo "=== Test program info ==="
+          file /tmp/test-arm64
+          
+          echo "✅ Toolchain verification passed!"
+
+      - name: Create SDK package
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          
+          make sdk || true
+          
+          if ls output/images/*sdk*.tar.gz 1> /dev/null 2>&1; then
+            cp output/images/*sdk*.tar.gz .
+            echo "SDK package created"
+          else
+            echo "Creating manual SDK package..."
+            tar -czf aarch64-buildroot-linux-gnu_sdk.tar.gz -C output/host .
+          fi
+
+      - name: Create environment script
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          
+          cat > dictpen-gcc9-env.sh << 'EOF'
+          #!/bin/bash
+          # DictPen P5 Toolchain environment script (GCC 9.3 / glibc 2.29)
+          
+          TOOLCHAIN_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
+          
+          export PATH="$TOOLCHAIN_DIR/output/host/usr/bin:$PATH"
+          export CROSS_COMPILE="aarch64-linux-"
+          export ARCH="arm64"
+          
+          if [ -d "$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu/sysroot" ]; then
+              export SYSROOT="$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu/sysroot"
+          else
+              export SYSROOT="$TOOLCHAIN_DIR/output/host/usr/aarch64-buildroot-linux-gnu"
+          fi
+          
+          export CC="aarch64-linux-gcc --sysroot=$SYSROOT"
+          export CXX="aarch64-linux-g++ --sysroot=$SYSROOT"
+          export LD="aarch64-linux-ld --sysroot=$SYSROOT"
+          export AR="aarch64-linux-ar"
+          export AS="aarch64-linux-as"
+          export NM="aarch64-linux-nm"
+          export STRIP="aarch64-linux-strip"
+          export RANLIB="aarch64-linux-ranlib"
+          export OBJCOPY="aarch64-linux-objcopy"
+          export OBJDUMP="aarch64-linux-objdump"
+          export GDB="aarch64-linux-gdb"
+          
+          echo "========================================="
+          echo "DictPen P5 Toolchain (GCC 9.3 / glibc 2.29)"
+          echo "========================================="
+          echo "GCC: $(aarch64-linux-gcc --version | head -1)"
+          echo "glibc: 2.29 (matches device)"
+          echo "========================================="
+          EOF
+          
+          chmod +x dictpen-gcc9-env.sh
+
+      - name: Package toolchain (with dereferenced symlinks)
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          
+          # 使用 -h 选项，将符号链接指向的实际文件打包
+          tar -czhf dictpen-p5-gcc9-toolchain-complete.tar.gz \
+              output/host \
+              dictpen-gcc9-env.sh \
+              configs/dictpen_p5_gcc9_defconfig \
+              .config \
+              --transform 's|^|dictpen-p5-gcc9-toolchain/|'
+          
+          echo "✅ Toolchain packaged: dictpen-p5-gcc9-toolchain-complete.tar.gz"
+          ls -lh *.tar.gz
+
+      - name: Upload toolchain artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictpen-p5-gcc9-toolchain
+          path: |
+            ~/buildroot-gcc9/buildroot-2021.02/dictpen-p5-gcc9-toolchain-complete.tar.gz
+            ~/buildroot-gcc9/buildroot-2021.02/*sdk*.tar.gz
+            ~/buildroot-gcc9/buildroot-2021.02/dictpen-gcc9-env.sh
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload build logs (if failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ~/buildroot-gcc9/buildroot-2021.02/output/build/**/*.log
+            ~/buildroot-gcc9/buildroot-2021.02/config.log
+          retention-days: 7
