@@ -308,12 +308,12 @@ jobs:
       - name: Check symbolic links before packaging (ignore runtime paths)
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02/output/host
-          echo "🔍 Checking symbolic links in host directory (ignoring /proc, /sys, /dev, /tmp)..."
+          echo "🔍 Checking symbolic links in host directory (ignoring runtime paths)..."
           broken=0
           while IFS= read -r link; do
             target=$(readlink "$link")
-            # 如果目标以 /proc/ /sys/ /dev/ /tmp/ 开头，则跳过检查（运行时虚拟文件系统）
-            if [[ "$target" == /proc/* || "$target" == /sys/* || "$target" == /dev/* || "$target" == /tmp/* ]]; then
+            # 如果目标包含 /proc/ /sys/ /dev/ /tmp/（包括相对路径如 ../proc/...），则跳过检查
+            if [[ "$target" == *"/proc/"* || "$target" == *"/sys/"* || "$target" == *"/dev/"* || "$target" == *"/tmp/"* ]]; then
               continue
             fi
             # 如果目标不是绝对路径，则拼接目录
