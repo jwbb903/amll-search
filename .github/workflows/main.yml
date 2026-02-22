@@ -50,7 +50,7 @@ jobs:
             locales \
             curl \
             ca-certificates \
-            m4  # 系统 m4，用于替代 host-m4
+            m4
           
           sudo ln -sf /usr/bin/python2 /usr/bin/python
           sudo locale-gen en_US.UTF-8
@@ -128,7 +128,6 @@ jobs:
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 创建必要的输出目录（不深入创建 host/usr）
           mkdir -p output/build
           mkdir -p output/images
           mkdir -p output/target
@@ -136,11 +135,9 @@ jobs:
           
           touch output/.br-external.mk
           
-          # 基础配置
           make defconfig
           make dictpen_p5_defconfig
           
-          # 验证配置
           if [ -f .config ]; then
             echo "✅ Configuration successful"
             grep "^BR2_" .config | grep -v "^#" | head -20
@@ -153,10 +150,8 @@ jobs:
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 彻底删除可能存在的旧 host-m4 构建目录
           rm -rf output/build/host-m4-1.4.18
           
-          # 修改 package/m4/m4.mk，使用系统 m4
           cat > package/m4/m4.mk << 'EOF'
           ################################################################################
           #
@@ -169,12 +164,10 @@ jobs:
           HOST_M4_SITE = $(BR2_GNU_MIRROR)/m4
           
           define HOST_M4_CONFIGURE_CMDS
-              # 无需配置
               true
           endef
           
           define HOST_M4_BUILD_CMDS
-              # 无需构建
               true
           endef
           
@@ -186,7 +179,6 @@ jobs:
           $(eval $(host-generic-package))
           EOF
           
-          # 创建空的构建目录并放置 stamp 文件，确保 Buildroot 认为已构建
           mkdir -p output/build/host-m4-1.4.18
           touch output/build/host-m4-1.4.18/.stamp_configured
           touch output/build/host-m4-1.4.18/.stamp_patched
@@ -199,11 +191,9 @@ jobs:
           cd ~/buildroot-work/buildroot-2018.02-rc3
           echo "Starting toolchain build (this will take 2-3 hours)..."
           
-          # 显示构建目标
           echo "=== Build Targets ==="
           make show-targets || true
           
-          # 开始构建 toolchain（host-m4 将被我们的假构建替代）
           make toolchain -j2
         env:
           FORCE_UNSAFE_CONFIGURE: 1
@@ -225,7 +215,6 @@ jobs:
           echo "=== Checking compiler target ==="
           aarch64-linux-gcc -dumpmachine
           
-          # 测试编译
           cat > /tmp/test.c << 'EOF'
           #include <stdio.h>
           int main() {
@@ -246,10 +235,8 @@ jobs:
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 尝试创建 SDK
           make sdk || true
           
-          # 查找或创建 SDK 包
           if ls output/images/*sdk*.tar.gz 1> /dev/null 2>&1; then
             cp output/images/*sdk*.tar.gz .
             echo "SDK package created"
@@ -302,19 +289,20 @@ jobs:
           
           chmod +x dictpen-env.sh
 
+      # 关键修改：在 tar 命令中添加 -h 选项以解除符号链接
       - name: Package toolchain
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
-          # 创建完整的工具链包
-          tar -czf dictpen-p5-toolchain-complete.tar.gz \
+          # 使用 -h 选项，将符号链接指向的实际文件打包
+          tar -czhf dictpen-p5-toolchain-complete.tar.gz \
               output/host \
               dictpen-env.sh \
               configs/dictpen_p5_defconfig \
               .config \
               --transform 's|^|dictpen-p5-toolchain/|'
           
-          echo "✅ Toolchain packaged: dictpen-p5-toolchain-complete.tar.gz"
+          echo "✅ Toolchain packaged (with dereferenced symlinks): dictpen-p5-toolchain-complete.tar.gz"
           ls -lh *.tar.gz
 
       - name: Upload toolchain artifacts
