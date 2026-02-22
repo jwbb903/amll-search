@@ -48,7 +48,7 @@ jobs:
             zlib1g-dev \
             device-tree-compiler \
             locales \
-            m4   # 系统 m4，用于替代 host-m4
+            m4
           
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
@@ -82,15 +82,16 @@ jobs:
         run: |
           mkdir -p ~/buildroot-gcc9
           cd ~/buildroot-gcc9
+          echo "📥 Downloading Buildroot 2021.02..."
           if [ ! -f buildroot-2021.02.tar.gz ]; then
-            wget -q https://buildroot.org/downloads/buildroot-2021.02.tar.gz
+            wget -q --show-progress https://buildroot.org/downloads/buildroot-2021.02.tar.gz
           fi
+          echo "📦 Extracting Buildroot source..."
           if [ ! -d buildroot-2021.02 ] || [ ! -f buildroot-2021.02/Makefile ]; then
-            echo "Extracting Buildroot source..."
             rm -rf buildroot-2021.02
             tar -xzf buildroot-2021.02.tar.gz
           fi
-          ls -la buildroot-2021.02/
+          echo "✅ Buildroot source ready"
 
       - name: Verify Buildroot source
         run: |
@@ -106,43 +107,37 @@ jobs:
           cd ~/buildroot-gcc9/buildroot-2021.02
           mkdir -p configs
           
+          echo "📝 Creating defconfig file..."
           cat > configs/dictpen_p5_gcc9_defconfig << 'EOF'
-          # ============================================
-          # Buildroot 2021.02 - 有道词典笔 P5 精确配置
-          # GCC 9.3 + glibc 2.29 + Linux 4.19
-          # ============================================
-          
           BR2_aarch64=y
           BR2_cortex_a55=y
           BR2_ARM_FPU_VFPV4=y
-          
           BR2_TOOLCHAIN_BUILDROOT=y
           BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
           BR2_GCC_VERSION_9_X=y
           BR2_GLIBC_VERSION_2_29=y
           BR2_KERNEL_HEADERS_4_19=y
-          
           BR2_TOOLCHAIN_BUILDROOT_CXX=y
           BR2_INSTALL_LIBSTDCPP=y
           BR2_TOOLCHAIN_HAS_SSP=y
           BR2_TOOLCHAIN_HAS_NATIVE_RPC=y
           BR2_USE_MMU=y
-          
           BR2_TARGET_OPTIMIZATION="-pipe -O2"
           BR2_TARGET_GENERIC_HOSTNAME="buildroot"
           BR2_TARGET_GENERIC_ISSUE="Welcome to Buildroot"
           BR2_SYSTEM_BIN_SH_BUSYBOX=y
           BR2_TARGET_GENERIC_GETTY=y
           BR2_TARGET_GENERIC_GETTY_PORT="ttyFIQ0"
-          
           BR2_SDK=y
           BR2_PACKAGE_HOST_GDB=y
           EOF
+          echo "✅ Defconfig created"
 
       - name: Initialize Buildroot and apply configuration
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
           
+          echo "🔧 Creating output directories..."
           mkdir -p output/build
           mkdir -p output/images
           mkdir -p output/target
@@ -150,7 +145,10 @@ jobs:
           
           touch output/.br-external.mk
           
+          echo "⚙️ Running defconfig..."
           make defconfig
+          
+          echo "⚙️ Applying custom configuration..."
           make dictpen_p5_gcc9_defconfig
           
           if [ -f .config ]; then
@@ -162,22 +160,14 @@ jobs:
             exit 1
           fi
 
-      # ========== 关键修复：伪造 host-m4 构建，使用系统 m4 ==========
       - name: Fake host-m4 build (use system m4)
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
           
-          # 删除可能存在的旧构建目录
+          echo "🔧 Setting up fake host-m4 build..."
           rm -rf output/build/host-m4-1.4.18
           
-          # 覆盖 m4.mk，定义空构建和安装系统 m4
           cat > package/m4/m4.mk << 'EOF'
-          ################################################################################
-          #
-          # m4
-          #
-          ################################################################################
-          
           HOST_M4_VERSION = 1.4.18
           HOST_M4_SOURCE = m4-$(HOST_M4_VERSION).tar.xz
           HOST_M4_SITE = $(BR2_GNU_MIRROR)/m4
@@ -198,30 +188,31 @@ jobs:
           $(eval $(host-generic-package))
           EOF
           
-          # 创建 stamp 文件，标记为已构建
           mkdir -p output/build/host-m4-1.4.18
           touch output/build/host-m4-1.4.18/.stamp_configured
           touch output/build/host-m4-1.4.18/.stamp_patched
           touch output/build/host-m4-1.4.18/.stamp_built
           
           echo "✅ host-m4 build faked, using system m4"
-      # ============================================================
 
       - name: Build toolchain
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
-          echo "Starting toolchain build (this will take 2-5 hours)..."
-          
-          echo "=== Build Targets ==="
-          make show-targets || true
-          
-          make toolchain -j2
+          echo "🚀 Starting toolchain build (this will take 2-5 hours)..."
+          echo "⏳ Building toolchain..."
+          echo "========================"
+          make toolchain -j2 2>&1 | tee build.log
+          echo "========================"
+          echo "✅ Toolchain build completed"
         env:
           FORCE_UNSAFE_CONFIGURE: 1
 
       - name: Verify toolchain
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
+          
+          echo "🔍 Verifying toolchain..."
+          echo ""
           
           if [ ! -d output/host/usr/bin ]; then
             echo "❌ Toolchain not found!"
@@ -232,14 +223,17 @@ jobs:
           
           echo "=== Toolchain version ==="
           aarch64-linux-gcc --version
+          echo ""
           
           echo "=== Checking compiler target ==="
           aarch64-linux-gcc -dumpmachine
+          echo ""
           
-          # 检查 glibc 版本
           echo "=== glibc version ==="
           strings output/host/usr/aarch64-buildroot-linux-gnu/sysroot/lib/libc-2.29.so | grep "GNU C Library" | head -1
+          echo ""
           
+          echo "=== Compiling test program ==="
           cat > /tmp/test.c << 'EOF'
           #include <stdio.h>
           int main() {
@@ -248,11 +242,11 @@ jobs:
           }
           EOF
           
-          echo "=== Compiling test program ==="
           aarch64-linux-gcc -o /tmp/test-arm64 /tmp/test.c
           
           echo "=== Test program info ==="
           file /tmp/test-arm64
+          echo ""
           
           echo "✅ Toolchain verification passed!"
 
@@ -260,24 +254,27 @@ jobs:
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
           
+          echo "📦 Creating SDK package..."
           make sdk || true
           
           if ls output/images/*sdk*.tar.gz 1> /dev/null 2>&1; then
             cp output/images/*sdk*.tar.gz .
-            echo "SDK package created"
+            echo "✅ SDK package created"
           else
-            echo "Creating manual SDK package..."
+            echo "📦 Creating manual SDK package..."
             tar -czf aarch64-buildroot-linux-gnu_sdk.tar.gz -C output/host .
+            echo "✅ Manual SDK package created"
           fi
+          
+          ls -lh *.tar.gz
 
       - name: Create environment script
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
           
+          echo "📝 Creating environment script..."
           cat > dictpen-gcc9-env.sh << 'EOF'
           #!/bin/bash
-          # DictPen P5 Toolchain environment script (GCC 9.3 / glibc 2.29)
-          
           TOOLCHAIN_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
           
           export PATH="$TOOLCHAIN_DIR/output/host/usr/bin:$PATH"
@@ -292,48 +289,75 @@ jobs:
           
           export CC="aarch64-linux-gcc --sysroot=$SYSROOT"
           export CXX="aarch64-linux-g++ --sysroot=$SYSROOT"
-          export LD="aarch64-linux-ld --sysroot=$SYSROOT"
-          export AR="aarch64-linux-ar"
-          export AS="aarch64-linux-as"
-          export NM="aarch64-linux-nm"
-          export STRIP="aarch64-linux-strip"
-          export RANLIB="aarch64-linux-ranlib"
-          export OBJCOPY="aarch64-linux-objcopy"
-          export OBJDUMP="aarch64-linux-objdump"
-          export GDB="aarch64-linux-gdb"
           
           echo "========================================="
           echo "DictPen P5 Toolchain (GCC 9.3 / glibc 2.29)"
           echo "========================================="
           echo "GCC: $(aarch64-linux-gcc --version | head -1)"
-          echo "glibc: 2.29 (matches device)"
+          echo "glibc: 2.29"
           echo "========================================="
           EOF
           
           chmod +x dictpen-gcc9-env.sh
+          echo "✅ Environment script created"
 
-      - name: Package toolchain (with dereferenced symlinks)
+      # ===== 方法2：先复制文件再打包，完全避免链接问题 =====
+      - name: Package toolchain (copy files first)
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
           
-          tar -czhf dictpen-p5-gcc9-toolchain-complete.tar.gz \
-              output/host \
-              dictpen-gcc9-env.sh \
-              configs/dictpen_p5_gcc9_defconfig \
-              .config \
-              --transform 's|^|dictpen-p5-gcc9-toolchain/|'
+          echo "📦 Packaging toolchain using method 2 (copy files first)..."
+          echo ""
           
-          echo "✅ Toolchain packaged: dictpen-p5-gcc9-toolchain-complete.tar.gz"
-          ls -lh *.tar.gz
+          # 创建临时目录
+          TEMP_DIR="dictpen-p5-temp"
+          mkdir -p $TEMP_DIR
+          
+          echo "📋 Copying files (this may take a few minutes)..."
+          
+          # 复制 host 目录，解引用所有符号链接
+          echo "  - Copying host tools..."
+          cp -aL output/host $TEMP_DIR/
+          
+          # 复制配置文件和环境脚本
+          echo "  - Copying config files..."
+          cp -L dictpen-gcc9-env.sh $TEMP_DIR/
+          cp -L configs/dictpen_p5_gcc9_defconfig $TEMP_DIR/
+          cp -L .config $TEMP_DIR/
+          
+          # 显示复制后的文件大小
+          echo ""
+          echo "📊 Package contents:"
+          du -sh $TEMP_DIR/*
+          echo ""
+          
+          # 打包（不压缩）
+          echo "📦 Creating tar archive..."
+          tar -cf dictpen-p5-gcc9-toolchain-complete.tar \
+              -C $TEMP_DIR \
+              . \
+              --transform 's|^\.|dictpen-p5-gcc9-toolchain|'
+          
+          # 清理临时目录
+          rm -rf $TEMP_DIR
+          
+          echo "✅ Toolchain packaged: dictpen-p5-gcc9-toolchain-complete.tar"
+          echo ""
+          
+          # 显示包信息
+          echo "=== Package Information ==="
+          ls -lh dictpen-p5-gcc9-toolchain-complete.tar
+          echo "📦 File count: $(tar -tf dictpen-p5-gcc9-toolchain-complete.tar | wc -l) files"
 
       - name: Upload toolchain artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dictpen-p5-gcc9-toolchain
           path: |
-            ~/buildroot-gcc9/buildroot-2021.02/dictpen-p5-gcc9-toolchain-complete.tar.gz
+            ~/buildroot-gcc9/buildroot-2021.02/dictpen-p5-gcc9-toolchain-complete.tar
             ~/buildroot-gcc9/buildroot-2021.02/*sdk*.tar.gz
             ~/buildroot-gcc9/buildroot-2021.02/dictpen-gcc9-env.sh
+            ~/buildroot-gcc9/buildroot-2021.02/build.log
           retention-days: 30
           if-no-files-found: warn
 
@@ -345,4 +369,40 @@ jobs:
           path: |
             ~/buildroot-gcc9/buildroot-2021.02/output/build/**/*.log
             ~/buildroot-gcc9/buildroot-2021.02/config.log
+            ~/buildroot-gcc9/buildroot-2021.02/build.log
           retention-days: 7
+
+      - name: Display build summary
+        if: success()
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          
+          echo "## ✅ GCC 9.3 + glibc 2.29 Toolchain Build Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Toolchain Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **GCC Version**: 9.3.0" >> $GITHUB_STEP_SUMMARY
+          echo "- **glibc Version**: 2.29" >> $GITHUB_STEP_SUMMARY
+          echo "- **Kernel Headers**: 4.19" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architecture**: ARM64 Cortex-A55" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Package Size" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          ls -lh *.tar >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Extract toolchain" >> $GITHUB_STEP_SUMMARY
+          echo "tar -xf dictpen-p5-gcc9-toolchain-complete.tar" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Source environment" >> $GITHUB_STEP_SUMMARY
+          echo "source dictpen-p5-gcc9-toolchain/dictpen-gcc9-env.sh" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Compile test program" >> $GITHUB_STEP_SUMMARY
+          echo "\$CC -o hello hello.c" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
