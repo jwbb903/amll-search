@@ -29,7 +29,7 @@ cd amll-search
 go build -o amll-api main.go
 
 # 运行
-./amll-api
+./amll-search
 ```
 
 默认会在 `43594` 端口启动服务，数据目录会自动探测（优先使用当前目录下的 `lyric-data`，若不存在则从 GitHub 克隆）。
@@ -48,7 +48,7 @@ go build -o amll-api main.go
 
 ```bash
 # 使用自定义数据目录，关闭自动同步，端口 8080
-./amll-api -data-dir /mnt/data/amll -no-sync -port 8080
+./amll-search -data-dir /mnt/data/amll -no-sync -port 8080
 ```
 
 ## API 文档
