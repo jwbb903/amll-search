@@ -47,7 +47,8 @@ jobs:
             libpixman-1-dev \
             zlib1g-dev \
             device-tree-compiler \
-            locales
+            locales \
+            m4   # 系统 m4，用于替代 host-m4
           
           sudo locale-gen en_US.UTF-8
           sudo update-locale LANG=en_US.UTF-8
@@ -84,7 +85,6 @@ jobs:
           if [ ! -f buildroot-2021.02.tar.gz ]; then
             wget -q https://buildroot.org/downloads/buildroot-2021.02.tar.gz
           fi
-          # 确保源码完整（若目录缺失或Makefile不存在则重新解压）
           if [ ! -d buildroot-2021.02 ] || [ ! -f buildroot-2021.02/Makefile ]; then
             echo "Extracting Buildroot source..."
             rm -rf buildroot-2021.02
@@ -110,35 +110,24 @@ jobs:
           # ============================================
           # Buildroot 2021.02 - 有道词典笔 P5 精确配置
           # GCC 9.3 + glibc 2.29 + Linux 4.19
-          # 完全匹配设备
           # ============================================
           
-          # 目标架构
           BR2_aarch64=y
           BR2_cortex_a55=y
           BR2_ARM_FPU_VFPV4=y
           
-          # ============================================
-          # 工具链配置
-          # ============================================
           BR2_TOOLCHAIN_BUILDROOT=y
           BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
           BR2_GCC_VERSION_9_X=y
           BR2_GLIBC_VERSION_2_29=y
           BR2_KERNEL_HEADERS_4_19=y
           
-          # ============================================
-          # 工具链选项
-          # ============================================
           BR2_TOOLCHAIN_BUILDROOT_CXX=y
           BR2_INSTALL_LIBSTDCPP=y
           BR2_TOOLCHAIN_HAS_SSP=y
           BR2_TOOLCHAIN_HAS_NATIVE_RPC=y
           BR2_USE_MMU=y
           
-          # ============================================
-          # 系统配置
-          # ============================================
           BR2_TARGET_OPTIMIZATION="-pipe -O2"
           BR2_TARGET_GENERIC_HOSTNAME="buildroot"
           BR2_TARGET_GENERIC_ISSUE="Welcome to Buildroot"
@@ -146,9 +135,6 @@ jobs:
           BR2_TARGET_GENERIC_GETTY=y
           BR2_TARGET_GENERIC_GETTY_PORT="ttyFIQ0"
           
-          # ============================================
-          # SDK 生成
-          # ============================================
           BR2_SDK=y
           BR2_PACKAGE_HOST_GDB=y
           EOF
@@ -164,11 +150,9 @@ jobs:
           
           touch output/.br-external.mk
           
-          # 基础配置
           make defconfig
           make dictpen_p5_gcc9_defconfig
           
-          # 验证关键配置
           if [ -f .config ]; then
             echo "✅ Configuration successful"
             echo "=== Key Settings ==="
@@ -178,6 +162,51 @@ jobs:
             exit 1
           fi
 
+      # ========== 关键修复：伪造 host-m4 构建，使用系统 m4 ==========
+      - name: Fake host-m4 build (use system m4)
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02
+          
+          # 删除可能存在的旧构建目录
+          rm -rf output/build/host-m4-1.4.18
+          
+          # 覆盖 m4.mk，定义空构建和安装系统 m4
+          cat > package/m4/m4.mk << 'EOF'
+          ################################################################################
+          #
+          # m4
+          #
+          ################################################################################
+          
+          HOST_M4_VERSION = 1.4.18
+          HOST_M4_SOURCE = m4-$(HOST_M4_VERSION).tar.xz
+          HOST_M4_SITE = $(BR2_GNU_MIRROR)/m4
+          
+          define HOST_M4_CONFIGURE_CMDS
+              true
+          endef
+          
+          define HOST_M4_BUILD_CMDS
+              true
+          endef
+          
+          define HOST_M4_INSTALL_CMDS
+              mkdir -p $(HOST_DIR)/usr/bin
+              cp /usr/bin/m4 $(HOST_DIR)/usr/bin/m4
+          endef
+          
+          $(eval $(host-generic-package))
+          EOF
+          
+          # 创建 stamp 文件，标记为已构建
+          mkdir -p output/build/host-m4-1.4.18
+          touch output/build/host-m4-1.4.18/.stamp_configured
+          touch output/build/host-m4-1.4.18/.stamp_patched
+          touch output/build/host-m4-1.4.18/.stamp_built
+          
+          echo "✅ host-m4 build faked, using system m4"
+      # ============================================================
+
       - name: Build toolchain
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
@@ -186,7 +215,6 @@ jobs:
           echo "=== Build Targets ==="
           make show-targets || true
           
-          # 构建 toolchain
           make toolchain -j2
         env:
           FORCE_UNSAFE_CONFIGURE: 1
@@ -212,7 +240,6 @@ jobs:
           echo "=== glibc version ==="
           strings output/host/usr/aarch64-buildroot-linux-gnu/sysroot/lib/libc-2.29.so | grep "GNU C Library" | head -1
           
-          # 编译测试程序
           cat > /tmp/test.c << 'EOF'
           #include <stdio.h>
           int main() {
@@ -289,7 +316,6 @@ jobs:
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
           
-          # 使用 -h 选项，将符号链接指向的实际文件打包
           tar -czhf dictpen-p5-gcc9-toolchain-complete.tar.gz \
               output/host \
               dictpen-gcc9-env.sh \
