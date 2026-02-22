@@ -88,9 +88,24 @@ jobs:
           if [ ! -f buildroot-2018.02-rc3.tar.gz ]; then
             wget -q https://buildroot.org/downloads/buildroot-2018.02-rc3.tar.gz
           fi
-          if [ ! -d buildroot-2018.02-rc3 ]; then
+          # 如果目录不存在或缺少 Makefile，则重新解压
+          if [ ! -d buildroot-2018.02-rc3 ] || [ ! -f buildroot-2018.02-rc3/Makefile ]; then
+            echo "Extracting Buildroot source..."
+            rm -rf buildroot-2018.02-rc3
             tar -xzf buildroot-2018.02-rc3.tar.gz
+          else
+            echo "Buildroot source already exists."
           fi
+          ls -la buildroot-2018.02-rc3/
+
+      - name: Verify Buildroot source
+        run: |
+          cd ~/buildroot-work/buildroot-2018.02-rc3
+          if [ ! -f Makefile ]; then
+            echo "❌ Buildroot Makefile not found!"
+            exit 1
+          fi
+          echo "✅ Buildroot source verified."
 
       - name: Create defconfig file
         run: |
@@ -134,6 +149,9 @@ jobs:
           mkdir -p output/staging
           
           touch output/.br-external.mk
+          
+          # 确认 Makefile 存在
+          ls -la Makefile
           
           make defconfig
           make dictpen_p5_defconfig
@@ -289,8 +307,7 @@ jobs:
           
           chmod +x dictpen-env.sh
 
-      # 关键修改：在 tar 命令中添加 -h 选项以解除符号链接
-      - name: Package toolchain
+      - name: Package toolchain (with dereferenced symlinks)
         run: |
           cd ~/buildroot-work/buildroot-2018.02-rc3
           
@@ -302,7 +319,7 @@ jobs:
               .config \
               --transform 's|^|dictpen-p5-toolchain/|'
           
-          echo "✅ Toolchain packaged (with dereferenced symlinks): dictpen-p5-toolchain-complete.tar.gz"
+          echo "✅ Toolchain packaged: dictpen-p5-toolchain-complete.tar.gz"
           ls -lh *.tar.gz
 
       - name: Upload toolchain artifacts
