@@ -1,4 +1,4 @@
-name: Build GCC 9.3 + glibc 2.29 Toolchain for DictPen P5
+name: Build GCC 9.3 + glibc 2.29 Toolchain for DictPen P5 (Fast Pack)
 
 on:
   push:
@@ -301,57 +301,50 @@ jobs:
           chmod +x dictpen-gcc9-env.sh
           echo "✅ Environment script created"
 
-      # ===== 安装 pv 并打包完整工具链（带进度条）=====
+      # ===== 快速打包（不解引用符号链接，显示总大小，带进度条）=====
       - name: Install pv for progress bar
         run: sudo apt-get install -y pv
 
-      - name: Package full toolchain with progress bar (all .so and tools)
+      - name: Package toolchain FAST (no dereference, show total size, with progress bar)
         run: |
           cd ~/buildroot-gcc9/buildroot-2021.02
           
-          echo "📦 Packaging full toolchain (all .so and tools) with progress bar..."
+          echo "📦 Packaging toolchain FAST (no dereference)..."
           echo ""
           
-          # 进入 host 目录准备打包
           cd output/host
           
-          # 使用 tar 并通过 pv 显示进度
-          # 参数说明：
-          #   -c  创建新包
-          #   -h  跟随符号链接（解引用），确保所有链接指向的文件都被打包
-          #   -f - 输出到标准输出（通过管道传给 pv）
-          #   --exclude 排除虚拟文件系统内容
-          tar -chf - \
-              --exclude='aarch64-buildroot-linux-gnu/sysroot/dev/*' \
-              --exclude='aarch64-buildroot-linux-gnu/sysroot/proc/*' \
-              --exclude='aarch64-buildroot-linux-gnu/sysroot/sys/*' \
-              --exclude='aarch64-buildroot-linux-gnu/sysroot/etc/mtab' \
-              --exclude='aarch64-buildroot-linux-gnu/sysroot/etc/resolv.conf' \
-              . | pv -t -r -b > ../../dictpen-p5-gcc9-toolchain-full.tar
+          # 显示总大小（人类可读格式）
+          total_size=$(du -sb . | cut -f1)
+          echo "Total size to package: $(numfmt --to=iec $total_size)"
+          echo ""
+          
+          # 打包并通过 pv 显示进度
+          tar -cf - . | pv -s $total_size -t -r -b > ../../dictpen-p5-gcc9-toolchain-fast.tar
           
           cd ../..
           
           # 将环境脚本和配置文件追加到同一个 tar 包中
-          tar -rf dictpen-p5-gcc9-toolchain-full.tar \
+          tar -rf dictpen-p5-gcc9-toolchain-fast.tar \
               dictpen-gcc9-env.sh \
               configs/dictpen_p5_gcc9_defconfig \
               .config
           
           echo ""
-          echo "✅ Full toolchain packaged: dictpen-p5-gcc9-toolchain-full.tar"
+          echo "✅ Toolchain packaged FAST: dictpen-p5-gcc9-toolchain-fast.tar"
           echo ""
           
           # 显示包信息
           echo "=== Package Information ==="
-          ls -lh dictpen-p5-gcc9-toolchain-full.tar
-          echo "📦 File count: $(tar -tf dictpen-p5-gcc9-toolchain-full.tar | wc -l) files"
+          ls -lh dictpen-p5-gcc9-toolchain-fast.tar
+          echo "📦 File count: $(tar -tf dictpen-p5-gcc9-toolchain-fast.tar | wc -l) files"
 
       - name: Upload toolchain artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dictpen-p5-gcc9-toolchain-full
+          name: dictpen-p5-gcc9-toolchain-fast
           path: |
-            ~/buildroot-gcc9/buildroot-2021.02/dictpen-p5-gcc9-toolchain-full.tar
+            ~/buildroot-gcc9/buildroot-2021.02/dictpen-p5-gcc9-toolchain-fast.tar
             ~/buildroot-gcc9/buildroot-2021.02/*sdk*.tar.gz
             ~/buildroot-gcc9/buildroot-2021.02/dictpen-gcc9-env.sh
             ~/buildroot-gcc9/buildroot-2021.02/build.log
@@ -395,7 +388,7 @@ jobs:
           echo "### Usage" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
           echo "# Extract toolchain" >> $GITHUB_STEP_SUMMARY
-          echo "tar -xf dictpen-p5-gcc9-toolchain-full.tar" >> $GITHUB_STEP_SUMMARY
+          echo "tar -xf dictpen-p5-gcc9-toolchain-fast.tar" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Source environment" >> $GITHUB_STEP_SUMMARY
           echo "source dictpen-gcc9-env.sh" >> $GITHUB_STEP_SUMMARY
