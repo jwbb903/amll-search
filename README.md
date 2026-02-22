@@ -22,8 +22,8 @@ AMLL TTML API 服务器是为 [amll-ttml-db](https://github.com/Steve-xmh/amll-t
 
 ```bash
 # 克隆仓库（如果有源码）
-git clone https://github.com/yourname/amll-api.git
-cd amll-api
+git clone https://github.com/jwbb903/amll-search
+cd amll-search
 
 # 编译
 go build -o amll-api main.go
