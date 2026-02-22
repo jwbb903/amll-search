@@ -1,4 +1,4 @@
-name: Build GCC 9.3 + glibc 2.29 Toolchain for DictPen P5 (Fast Pack)
+name: Build GCC 9.3 + glibc 2.29 Toolchain for DictPen P5 (with link check)
 
 on:
   push:
@@ -301,9 +301,35 @@ jobs:
           chmod +x dictpen-gcc9-env.sh
           echo "✅ Environment script created"
 
-      # ===== 快速打包（不解引用符号链接，显示总大小，带进度条）=====
+      # ===== 快速打包（不解引用符号链接，先检查符号链接有效性，显示总大小，带进度条）=====
       - name: Install pv for progress bar
         run: sudo apt-get install -y pv
+
+      - name: Check symbolic links before packaging
+        run: |
+          cd ~/buildroot-gcc9/buildroot-2021.02/output/host
+          echo "🔍 Checking symbolic links in host directory..."
+          broken=0
+          while IFS= read -r link; do
+            target=$(readlink "$link")
+            # 如果目标不是绝对路径，则拼接目录
+            if [[ "$target" != /* ]]; then
+              target_dir=$(dirname "$link")/$target
+            else
+              target_dir="$target"
+            fi
+            if [ ! -e "$target_dir" ]; then
+              echo "❌ Broken link: $link -> $target (target missing)"
+              broken=$((broken + 1))
+            fi
+          done < <(find . -type l)
+          
+          if [ $broken -gt 0 ]; then
+            echo "❌ Found $broken broken symbolic links. Packaging aborted."
+            exit 1
+          else
+            echo "✅ All symbolic links are valid."
+          fi
 
       - name: Package toolchain FAST (no dereference, show total size, with progress bar)
         run: |
